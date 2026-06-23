@@ -102,16 +102,17 @@ def _get_tooltip() -> str:
 
 
 def _create_icon(healthy: bool = True) -> Image.Image:
-    """用 Pillow 生成托盘图标（绿色圆 + Q 字）"""
+    """用 Pillow 生成托盘图标（绿点/黄点）
+
+    绿点 = 一切正常，黄点 = 有异常
+    """
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    color = (76, 175, 80, 255) if healthy else (244, 67, 54, 255)
-    draw.ellipse([4, 4, size - 4, size - 4], fill=color)
-
-    draw.text((size // 2, size // 2 - 2), "Q", fill=(255, 255, 255, 255),
-              anchor="mm")
+    # 绿点 或 黄点（警告色）
+    color = (76, 175, 80, 255) if healthy else (255, 193, 7, 255)
+    draw.ellipse([6, 6, size - 6, size - 6], fill=color)
     return img
 
 
