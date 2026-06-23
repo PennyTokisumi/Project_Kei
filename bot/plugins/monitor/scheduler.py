@@ -15,6 +15,7 @@ from .sources.base_tracker import LiveStatusTracker
 from .sources.bilibili_dynamic import BilibiliDynamic
 from .sources.bilibili_live import BilibiliLive
 from .sources.douyu_live import DouyuLive
+from bot.tray import update_status
 
 logger = logging.getLogger("monitor.scheduler")
 
@@ -112,6 +113,8 @@ async def start():
         return
 
     targets = list_targets()
+    update_status(targets_total=len(targets), alive=True)
+
     for t in targets:
         source = _make_source(t)
         if source is None:

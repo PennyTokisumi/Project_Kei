@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "aiofiles>=24.0",
+    "pystray>=0.19",
+    "Pillow>=10.0",
 ]
 
 [tool.nonebot]
