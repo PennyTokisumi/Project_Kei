@@ -147,7 +147,7 @@ class TrayIcon:
         self._icon = pystray.Icon(
             "QQ_Monitor_Bot",
             icon_image,
-            title=_get_tooltip,
+            title=_get_tooltip(),
         )
         self._icon.menu = self._build_menu()
 
