@@ -1,6 +1,5 @@
 """消息格式化 - B站动态用合并转发，开播用普通图文消息"""
 
-from typing import Optional
 from nonebot.adapters.onebot.v11 import MessageSegment, Message, Bot
 
 from .sources.base import Item
@@ -30,10 +29,10 @@ def build_live_message(item: Item) -> Message:
     return segs
 
 
-def build_dynamic_forward_msg(bot: Bot, items: list[Item]) -> list[dict]:
+def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
     """B站动态 → 合并转发消息节点列表
 
-   即使只有 1 条动态，也以合并转发形式推送。
+    即使只有 1 条动态，也以合并转发形式推送。
     每条动态作为一个独立的消息节点（node）。
     """
     nodes = []
@@ -76,7 +75,7 @@ async def send_dynamic_forward(bot: Bot, group_id: int,
     if not items:
         return
 
-    nodes = build_dynamic_forward_msg(bot, items)
+    nodes = build_dynamic_forward_msg(items)
     await bot.call_api(
         "send_group_forward_msg",
         group_id=group_id,

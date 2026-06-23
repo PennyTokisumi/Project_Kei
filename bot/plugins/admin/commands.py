@@ -1,16 +1,11 @@
 """群管理命令 - add / list / remove / status"""
 
-import logging
-
-from nonebot import get_bot
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Bot, Message
 from nonebot.rule import to_me, startswith
 
 from ..monitor.database import add_target, remove_target, list_targets, get_target
 from ..monitor.scheduler import reload_targets
-
-logger = logging.getLogger("admin")
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)

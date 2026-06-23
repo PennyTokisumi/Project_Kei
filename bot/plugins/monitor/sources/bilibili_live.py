@@ -1,6 +1,7 @@
 """B站直播监测 - 通过 RSSHub 获取直播间状态"""
 
 import feedparser
+import re
 from typing import Optional
 
 from httpx import AsyncClient
@@ -61,7 +62,6 @@ class BilibiliLive(SourceBase):
         cover_url = None
         summary = latest.get("summary", "")
         if summary:
-            import re
             m = re.search(r'<img[^>]+src="([^"]+)"', summary)
             if m:
                 cover_url = m.group(1)

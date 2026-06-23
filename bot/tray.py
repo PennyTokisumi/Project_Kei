@@ -2,7 +2,6 @@
 
 import logging
 import os
-import sys
 import threading
 from pathlib import Path
 
@@ -127,7 +126,6 @@ class TrayIcon:
 
     def _build_menu(self) -> "pystray.Menu":
         """动态构建右键菜单"""
-        autostart_on = is_autostart_enabled()
         return pystray.Menu(
             pystray.MenuItem(
                 "开机自启动",

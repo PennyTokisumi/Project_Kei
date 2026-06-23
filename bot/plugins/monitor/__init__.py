@@ -8,7 +8,7 @@ import logging
 from nonebot import get_driver
 
 from .scheduler import start, stop
-from bot.tray import tray, update_status
+from tray import tray, update_status
 
 logger = logging.getLogger("monitor")
 logger.setLevel(logging.INFO)

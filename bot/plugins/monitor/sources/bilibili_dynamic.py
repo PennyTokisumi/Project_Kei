@@ -1,6 +1,7 @@
 """B站动态监测 - 通过 RSSHub 获取用户动态（原创 & 视频投稿）"""
 
 import feedparser
+import re
 from typing import Optional
 
 from httpx import AsyncClient
@@ -77,14 +78,11 @@ class BilibiliDynamic(SourceBase):
             cover_url = None
             summary = entry.get("summary", "")
             if summary:
-                # 尝试从 summary 中提取第一张图片
-                import re
                 img_match = re.search(r'<img[^>]+src="([^"]+)"', summary)
                 if img_match:
                     cover_url = img_match.group(1)
 
             # 提取纯文本正文（去掉 HTML 标签）
-            import re
             clean_content = re.sub(r'<[^>]+>', '', summary).strip()
             # 限制长度避免消息过长
             if len(clean_content) > 500:

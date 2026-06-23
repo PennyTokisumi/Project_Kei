@@ -1,7 +1,5 @@
 """斗鱼直播监测 - 直连斗鱼公开 API"""
 
-from typing import Optional
-
 from httpx import AsyncClient
 
 from .base import Item, SourceBase

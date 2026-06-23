@@ -17,7 +17,7 @@ class Config(BaseSettings):
 
     # 监测
     poll_interval: int = Field(default=60, description="轮询间隔（秒）")
-    db_path: str = Field(default="data/db.sqlite3")
+    db_path: str = Field(default="db.sqlite3")
 
     # 日志
     log_level: str = Field(default="INFO")

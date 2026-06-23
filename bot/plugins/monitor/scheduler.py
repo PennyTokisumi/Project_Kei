@@ -15,7 +15,7 @@ from .sources.base_tracker import LiveStatusTracker
 from .sources.bilibili_dynamic import BilibiliDynamic
 from .sources.bilibili_live import BilibiliLive
 from .sources.douyu_live import DouyuLive
-from bot.tray import update_status
+from tray import update_status
 
 logger = logging.getLogger("monitor.scheduler")
 
@@ -64,30 +64,30 @@ async def poll_source(source: SourceBase):
             if not detected:
                 continue  # 已经在直播中，不是刚开播
 
-        new_items.append(item)
-        dedup.mark_pushed(
-            item.platform, item.source_type,
-            item.target_id, item.id,
-            item.title, item.link,
-        )
-
     if not new_items:
         return
 
-    # 推送
+    # 推送（成功后再标记已推送，防止推送失败丢失内容）
     try:
         if is_live:
-            # 直播开播：每条单独推送
             for item in new_items:
                 await send_live_notification(bot, source.group_id, item)
             logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
         else:
-            # B站动态：合并转发
             nickname = new_items[0].nickname or source.target_id
             await send_dynamic_forward(bot, source.group_id, nickname, new_items)
             logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
     except Exception as e:
         logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
+        return  # 推送失败，不标记已推送
+
+    # 推送成功后标记
+    for item in new_items:
+        dedup.mark_pushed(
+            item.platform, item.source_type,
+            item.target_id, item.id,
+            item.title, item.link,
+        )
 
 
 def _make_source(target: dict) -> Optional[SourceBase]:
@@ -150,7 +150,38 @@ async def stop():
 
 async def reload_targets():
     """重新加载所有目标（add/remove 后调用）"""
-    await stop()
-    # 清空旧任务
-    scheduler.remove_all_jobs()
-    await start()
+    targets = list_targets()
+    update_status(targets_total=len(targets), alive=True)
+
+    current_jobs = {job.id for job in scheduler.get_jobs()}
+
+    # 移除已删除的目标
+    wanted_ids: set[str] = set()
+    for t in targets:
+        source = _make_source(t)
+        if source is None:
+            continue
+        job_id = f"{source.platform}/{source.target_id}"
+        wanted_ids.add(job_id)
+
+        if job_id not in current_jobs:
+            scheduler.add_job(
+                poll_source,
+                "interval",
+                seconds=config.poll_interval,
+                id=job_id,
+                args=[source],
+                replace_existing=True,
+                misfire_grace_time=30,
+            )
+            logger.info(f"新增轮询任务 [{job_id}]")
+
+    # 移除已删除的任务
+    for job_id in current_jobs - wanted_ids:
+        scheduler.remove_job(job_id)
+        logger.info(f"移除轮询任务 [{job_id}]")
+
+    # 首次启动
+    if not scheduler.running and targets:
+        scheduler.start()
+        logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
