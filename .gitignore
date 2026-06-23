@@ -13,15 +13,20 @@ data/logs/
 .env
 .env.prod
 
-# Lagarange 凭证（含 QQ 登录态）
+# Lagrange 运行时文件（QQ 登录凭证 + 二进制）
 lagrange/Keystore
-lagrange/*.json
+lagrange/*.zip
+lagrange/*.exe
+lagrange/*.dll
+lagrange/*.so
+lagrange/*.dylib
 lagrange/*.log
+# 保留 appsettings.json 模板
+!lagrange/appsettings.json
+!lagrange/appsettings.*.json
 
-# RSSHub
-rsshub/node_modules/
-rsshub/.env
-rsshub/data/
+# RSSHub（独立 git 仓库，本地手动管理）
+rsshub/
 
 # IDE
 .idea/
