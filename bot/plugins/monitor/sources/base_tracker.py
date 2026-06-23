@@ -21,9 +21,9 @@ class LiveStatusTracker:
         prev = get_live_status(self.room_id, self.platform)
 
         if prev is None:
-            # 初次记录，不上报开播
+            # 初次记录，如果正在直播则直接推送
             set_live_status(self.room_id, self.platform, is_living, title)
-            return False
+            return is_living
 
         was_living = bool(prev["is_living"])
         set_live_status(self.room_id, self.platform, is_living, title)
