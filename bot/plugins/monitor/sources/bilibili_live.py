@@ -1,13 +1,22 @@
-"""B站直播监测 - 通过 RSSHub 获取直播间状态"""
+"""B站直播监测 - 直连 B站直播 API"""
 
-import feedparser
 import re
 from typing import Optional
 
 from httpx import AsyncClient
 
-from config import config
 from .base import Item, SourceBase
+
+BILIBILI_LIVE_API = (
+    "https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
+)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://live.bilibili.com/",
+}
 
 
 class BilibiliLive(SourceBase):
@@ -21,78 +30,47 @@ class BilibiliLive(SourceBase):
     def source_type(self) -> str:
         return "live"
 
-    async def _fetch_feed(self) -> Optional[bytes]:
-        """从 RSSHub 获取直播间 RSS"""
-        url = f"{config.rsshub_base_url}/bilibili/live/room/{self.target_id}"
-        async with AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers={"User-Agent": "QQ_Monitor_Bot/1.0"})
-            resp.raise_for_status()
-            return resp.content
-
     async def fetch(self) -> list[Item]:
         """拉取 B站直播间当前状态
 
-        当主播开播时 RSSHub 会有新的 item，否则 feed 为空或只有旧 item。
-        注意这里返回的是当前直播状态（如果有），由调用方做 off→on 检测。
+        只在开播时返回 item，由调用方做 off→on 检测。
         """
+        url = BILIBILI_LIVE_API.format(room_id=self.target_id)
         try:
-            content = await self._fetch_feed()
-            if not content:
-                return []
+            async with AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
         except Exception:
             return []
 
-        feed = feedparser.parse(content)
-        if not feed.entries:
+        if data.get("code") != 0:
             return []
 
-        latest = feed.entries[0]
-        title = latest.get("title", "")
-
-        # 判断是否在直播中（RSSHub 标题格式通常是 "【正在直播】..."）
-        is_living = title.startswith("【") or "直播" in title
-
-        if not is_living:
+        room = data.get("data", {}).get("room_info", {})
+        if not room:
             return []
 
-        # 提取直播间信息
-        link = latest.get("link", "") or f"https://live.bilibili.com/{self.target_id}"
-
-        # 提取封面图（从 summary 中的 img 标签）
-        cover_url = None
-        summary = latest.get("summary", "")
-        if summary:
-            m = re.search(r'<img[^>]+src="([^"]+)"', summary)
-            if m:
-                cover_url = m.group(1)
-
-        # 标题清理
-        clean_title = title.replace("【正在直播】", "").strip()
-
-        # 取昵称
-        nickname = ""
-        if " " in clean_title:
-            parts = clean_title.split(" ", 1)
-            nickname = parts[0].strip()
-            clean_title = parts[1].strip() if len(parts) > 1 else clean_title
-        else:
-            nickname = feed.feed.get("title", "")
+        # live_status: 1=直播中, 0=未开播, 2=轮播
+        live_status = room.get("live_status", 0)
+        if live_status != 1:
+            return []
 
         item = Item(
-            id=f"live_{latest.get('id', self.target_id)}",
+            id=f"live_{room.get('room_id', self.target_id)}",
             platform=self.platform,
             source_type=self.source_type,
             target_id=self.target_id,
-            title=clean_title or title,
-            nickname=nickname,
-            content=clean_title or title,
-            link=link,
-            cover_url=cover_url,
+            title=room.get("title", ""),
+            nickname=room.get("uname", ""),
+            content=room.get("title", ""),
+            link=f"https://live.bilibili.com/{self.target_id}",
+            cover_url=room.get("cover"),
         )
         return [item]
 
     async def get_display_name(self) -> str:
-        """尝试获取主播名"""
+        """获取主播名"""
         try:
             items = await self.fetch()
             if items:

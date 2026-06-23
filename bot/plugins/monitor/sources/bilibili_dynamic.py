@@ -1,20 +1,24 @@
-"""B站动态监测 - 通过 RSSHub 获取用户动态（原创 & 视频投稿）"""
+"""B站动态监测 - 直连 B站 API（原创 & 视频投稿）"""
 
-import feedparser
 import re
 from typing import Optional
 
 from httpx import AsyncClient
 
-from config import config
 from .base import Item, SourceBase
 
+BILIBILI_DYNAMIC_API = (
+    "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space"
+    "?host_mid={uid}&offset="
+)
+BILIBILI_USER_API = "https://api.bilibili.com/x/space/wbi/acc/info?mid={uid}"
 
-# B站动态类型 ID 映射
-# https://github.com/SocialSisterYi/bilibili-API-collect
-DYNAMIC_TYPE_ORIGINAL = {2, 4}       # 图片动态, 文字动态
-DYNAMIC_TYPE_VIDEO = {8}             # 视频投稿
-DYNAMIC_TYPE_REPOST = {1}            # 转发动态（需要过滤掉）
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Referer": "https://space.bilibili.com/",
+}
 
 
 class BilibiliDynamic(SourceBase):
@@ -28,93 +32,87 @@ class BilibiliDynamic(SourceBase):
     def source_type(self) -> str:
         return "dynamic"
 
-    async def _fetch_feed(self) -> Optional[str]:
-        """从 RSSHub 获取原始 RSS XML"""
-        url = f"{config.rsshub_base_url}/bilibili/user/dynamic/{self.target_id}"
-        async with AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers={"User-Agent": "QQ_Monitor_Bot/1.0"})
-            resp.raise_for_status()
-            return resp.text
-
     async def fetch(self) -> list[Item]:
-        """拉取 B站用户原创动态和视频投稿
+        """拉取 B站用户最新动态（原创 & 视频投稿）
 
-        过滤规则：只保留原创（文字/图片/视频），过滤转发动态
+        过滤转发动态，只保留原创内容。
         """
-        xml = await self._fetch_feed()
-        if not xml:
+        url = BILIBILI_DYNAMIC_API.format(uid=self.target_id)
+        try:
+            async with AsyncClient(timeout=15) as client:
+                resp = await client.get(url, headers=HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:
             return []
 
-        feed = feedparser.parse(xml)
-        items: list[Item] = []
+        if data.get("code") != 0:
+            return []
 
-        for entry in feed.entries:
-            # 解析动态类型（RSSHub 的 category 字段）
-            categories = entry.get("category", [])
-            if isinstance(categories, str):
-                categories = [categories]
+        items_list = data.get("data", {}).get("items", [])
+        if not items_list:
+            return []
 
-            # 判断动态类型
-            dyn_type = None
-            for cat in categories:
-                try:
-                    dyn_type = int(cat)
-                except (ValueError, TypeError):
-                    continue
+        result: list[Item] = []
+        for dyn in items_list:
+            # 解析模块内容
+            modules = dyn.get("modules", {})
+            desc = modules.get("module_dynamic", {}).get("desc", {})
+            author = modules.get("module_author", {})
 
-            # 过滤：跳过转发动态（类型 1）
-            if dyn_type == 1:
+            dyn_type = desc.get("type", "")
+
+            # 只保留原创动态和视频投稿
+            # DYNAMIC_TYPE_DRAW=2, DYNAMIC_TYPE_WORD=4, DYNAMIC_TYPE_AV=8
+            if dyn_type not in ("DYNAMIC_TYPE_DRAW", "DYNAMIC_TYPE_WORD",
+                                 "DYNAMIC_TYPE_AV"):
                 continue
 
-            # 只保留原创动态（2, 4）和视频投稿（8）
-            if dyn_type not in DYNAMIC_TYPE_ORIGINAL | DYNAMIC_TYPE_VIDEO:
-                continue
+            dyn_id = dyn.get("id_str", str(dyn.get("id", "")))
+            nickname = author.get("name", "")
+            text = desc.get("text", "")
+            link = f"https://t.bilibili.com/{dyn_id}"
 
-            # RSSHub 的 guid 格式: bilibili://user/dynamic/{dynamic_id}
-            guid = entry.get("id", "")
-            dynamic_id = guid.split("/")[-1] if "/" in guid else guid
-
-            # 提取封面
+            # 提取封面图
             cover_url = None
-            summary = entry.get("summary", "")
-            if summary:
-                img_match = re.search(r'<img[^>]+src="([^"]+)"', summary)
-                if img_match:
-                    cover_url = img_match.group(1)
+            if dyn_type == "DYNAMIC_TYPE_DRAW":
+                major = modules.get("module_dynamic", {}).get("major")
+                if major and major.get("draw"):
+                    items_draw = major["draw"].get("items", [])
+                    if items_draw:
+                        cover_url = items_draw[0].get("src")
 
-            # 提取纯文本正文（去掉 HTML 标签）
-            clean_content = re.sub(r'<[^>]+>', '', summary).strip()
-            # 限制长度避免消息过长
+            # 清理文本
+            clean_content = re.sub(r'<[^>]+>', '', text).strip()
             if len(clean_content) > 500:
                 clean_content = clean_content[:500] + "..."
 
-            item = Item(
-                id=dynamic_id,
+            result.append(Item(
+                id=dyn_id,
                 platform=self.platform,
                 source_type=self.source_type,
                 target_id=self.target_id,
-                title=entry.get("title", ""),
-                nickname=feed.feed.get("title", "").replace("的动态", ""),
-                content=clean_content or entry.get("title", ""),
-                link=entry.get("link", ""),
+                title=clean_content[:50] or f"{nickname}的动态",
+                nickname=nickname,
+                content=clean_content,
+                link=link,
                 cover_url=cover_url,
-                extra={"dynamic_type": dyn_type},
-            )
-            items.append(item)
+            ))
 
-        return items
+        return result
 
     async def get_display_name(self) -> str:
         """获取用户昵称"""
         try:
-            xml = await self._fetch_feed()
-            if xml:
-                feed = feedparser.parse(xml)
-                title = feed.feed.get("title", "")
-                # 格式通常是 "XXX 的动态"
-                if "的动态" in title:
-                    return title.replace("的动态", "").strip()
-                return title
+            async with AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    BILIBILI_USER_API.format(uid=self.target_id),
+                    headers=HEADERS,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == 0:
+                        return data["data"].get("name", self.target_id)
         except Exception:
             pass
         return self.target_id
