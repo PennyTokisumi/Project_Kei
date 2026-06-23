@@ -16,9 +16,6 @@ data/logs/
 # NapCatQQ（QQ 客户端，不提交到 git）
 napcat/
 
-# RSSHub（独立 git 仓库，本地手动管理）
-rsshub/
-
 # 下载文件
 Download/
 

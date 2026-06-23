@@ -7,7 +7,6 @@ echo.
 
 taskkill /FI "WINDOWTITLE eq NoneBot2" /F 2>nul && echo [OK] 已停止 NoneBot2 || echo [!] NoneBot2 未运行
 taskkill /FI "WINDOWTITLE eq NapCat" /F 2>nul && echo [OK] 已停止 NapCatQQ || echo [!] NapCatQQ 未运行
-taskkill /FI "WINDOWTITLE eq RSSHub" /F 2>nul && echo [OK] 已停止 RSSHub || echo [!] RSSHub 未运行
 
 echo.
 echo 所有组件已停止。

@@ -12,9 +12,6 @@ class Config(BaseSettings):
     driver: str = Field(default="~fastapi+~websockets")
     onebot_ws_hosts: list[dict] = Field(default=[{"host": "127.0.0.1", "port": 8080}])
 
-    # RSSHub
-    rsshub_base_url: str = Field(default="http://127.0.0.1:1200")
-
     # 监测
     poll_interval: int = Field(default=60, description="轮询间隔（秒）")
     db_path: str = Field(default="db.sqlite3")
