@@ -35,4 +35,4 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot "..\data\logs
 Write-Host "  OK" -ForegroundColor Green
 
 Write-Host "`n初始化完成！" -ForegroundColor Cyan
-Write-Host "下一步：配置 Lagrange.OneBot 并启动" -ForegroundColor Cyan
+Write-Host "下一步：配置 NapCatQQ 并启动" -ForegroundColor Cyan

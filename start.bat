@@ -19,10 +19,10 @@ if %ERRORLEVEL% NEQ 0 (
 )
 timeout /t 3 /nobreak >nul
 
-:: ===== 2. 启动 Lagrange.OneBot =====
-echo [2/3] 启动 Lagrange.OneBot (端口 9090)...
-start "Lagrange" cmd /c "cd /d "%ROOT%\lagrange" && Lagrange.OneBot.exe 2>&1"
-timeout /t 3 /nobreak >nul
+:: ===== 2. 启动 NapCatQQ =====
+echo [2/3] 启动 NapCatQQ...
+start "NapCat" cmd /c "cd /d "%ROOT%\napcat" && napcat.bat 2>&1"
+timeout /t 5 /nobreak >nul
 
 :: ===== 3. 启动 NoneBot2 =====
 echo [3/3] 启动 NoneBot2 (WebSocket 端口 8080)...
@@ -30,9 +30,9 @@ start "NoneBot2" cmd /c "cd /d "%ROOT%\bot" && "%ROOT%\.venv\Scripts\python.exe"
 
 echo.
 echo 所有组件已启动！
-echo   RSSHub:      http://127.0.0.1:1200
-echo   Lagrange:    WebSocket 9090 -^> 8080
-echo   NoneBot2:    WebSocket 8080
+echo   RSSHub:   http://127.0.0.1:1200
+echo   NapCatQQ: WebUI http://127.0.0.1:6099/webui
+echo   NoneBot2: WebSocket 8080
 echo.
 echo 关闭所有窗口即可停止，或运行 stop.bat
 echo ========================================

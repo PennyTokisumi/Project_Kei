@@ -13,20 +13,14 @@ data/logs/
 .env
 .env.prod
 
-# Lagrange 运行时文件（QQ 登录凭证 + 二进制）
-lagrange/Keystore
-lagrange/*.zip
-lagrange/*.exe
-lagrange/*.dll
-lagrange/*.so
-lagrange/*.dylib
-lagrange/*.log
-# 保留 appsettings.json 模板
-!lagrange/appsettings.json
-!lagrange/appsettings.*.json
+# NapCatQQ（QQ 客户端，不提交到 git）
+napcat/
 
 # RSSHub（独立 git 仓库，本地手动管理）
 rsshub/
+
+# 下载文件
+Download/
 
 # IDE
 .idea/
