@@ -1,6 +1,5 @@
 """定时调度器 - 基于 APScheduler 管理所有轮询任务"""
 
-import logging
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,8 +16,6 @@ from .sources.bilibili_live import BilibiliLive
 from .sources.douyu_live import DouyuLive
 from tray import update_status
 
-logger = logging.getLogger("monitor.scheduler")
-
 scheduler = AsyncIOScheduler()
 
 # 工厂映射：platform_source_type → SourceBase 子类
@@ -33,13 +30,13 @@ async def poll_source(source: SourceBase):
     try:
         bot = get_bot()
     except Exception:
-        logger.warning("Bot 未就绪，跳过轮询")
+        nb_logger.warning("Bot 未就绪，跳过轮询")
         return
 
     try:
         items = await source.fetch()
     except Exception as e:
-        logger.error(f"抓取失败 [{source.platform}/{source.target_id}]: {e}")
+        nb_logger.error(f"抓取失败 [{source.platform}/{source.target_id}]: {e}")
         return
 
     if not items:
@@ -72,13 +69,13 @@ async def poll_source(source: SourceBase):
         if is_live:
             for item in new_items:
                 await send_live_notification(bot, source.group_id, item)
-            logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
+            nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
         else:
             nickname = new_items[0].nickname or source.target_id
             await send_dynamic_forward(bot, source.group_id, nickname, new_items)
-            logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
+            nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
     except Exception as e:
-        logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
+        nb_logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
         return  # 推送失败，不标记已推送
 
     # 推送成功后标记
@@ -98,7 +95,7 @@ def _make_source(target: dict) -> Optional[SourceBase]:
 
     cls = SOURCE_FACTORY.get(platform)
     if cls is None:
-        logger.warning(f"不支持的平台: {platform}")
+        nb_logger.warning(f"不支持的平台: {platform}")
         return None
     return cls(target_id, group_id)
 
@@ -109,7 +106,7 @@ async def start():
 
     # 防止重复 start
     if scheduler.running:
-        logger.warning("调度器已在运行，跳过")
+        nb_logger.warning("调度器已在运行，跳过")
         return
 
     targets = list_targets()
@@ -132,20 +129,20 @@ async def start():
             replace_existing=True,
             misfire_grace_time=30,
         )
-        logger.info(f"注册轮询任务 [{job_id}] 间隔 {interval}s")
+        nb_logger.info(f"注册轮询任务 [{job_id}] 间隔 {interval}s")
 
     if targets:
         scheduler.start()
-        logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
+        nb_logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
     else:
-        logger.info("暂无监测目标，调度器待机")
+        nb_logger.info("暂无监测目标，调度器待机")
 
 
 async def stop():
     """停止调度器"""
     if scheduler.running:
         scheduler.shutdown(wait=False)
-        logger.info("调度器已停止")
+        nb_logger.info("调度器已停止")
 
 
 async def reload_targets():
@@ -174,16 +171,16 @@ async def reload_targets():
                 replace_existing=True,
                 misfire_grace_time=30,
             )
-            logger.info(f"新增轮询任务 [{job_id}]")
+            nb_logger.info(f"新增轮询任务 [{job_id}]")
 
     # 移除已删除的任务
     for job_id in current_jobs - wanted_ids:
         scheduler.remove_job(job_id)
-        logger.info(f"移除轮询任务 [{job_id}]")
+        nb_logger.info(f"移除轮询任务 [{job_id}]")
 
     # 确保调度器在运行
     if not scheduler.running and targets:
         scheduler.start()
-        logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
+        nb_logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
     elif scheduler.running:
-        logger.info(f"调度器已刷新，共 {len(targets)} 个监测目标")
+        nb_logger.info(f"调度器已刷新，共 {len(targets)} 个监测目标")
