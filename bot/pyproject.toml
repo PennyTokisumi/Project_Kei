@@ -1,0 +1,18 @@
+[project]
+name = "QQ_Monitor_Bot"
+version = "0.1.0"
+description = "QQ 群监测机器人 - B站动态/直播 + 斗鱼直播推送"
+requires-python = ">=3.12"
+dependencies = [
+    "nonebot2[fast]>=2.4.0",
+    "nonebot-adapter-onebot>=2.4.0",
+    "httpx>=0.28.0",
+    "feedparser>=6.0",
+    "apscheduler>=3.10",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "aiofiles>=24.0",
+]
+
+[tool.nonebot]
+plugins = ["bot.plugins.monitor", "bot.plugins.admin"]
