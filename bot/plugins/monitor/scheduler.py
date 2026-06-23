@@ -61,6 +61,8 @@ async def poll_source(source: SourceBase):
             if not detected:
                 continue  # 已经在直播中，不是刚开播
 
+        new_items.append(item)
+
     if not new_items:
         return
 
