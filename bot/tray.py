@@ -155,9 +155,11 @@ class TrayIcon:
             import time as _time
             # 每 5 秒刷新 tooltip
             def refresh():
-                while not self._icon._stopped:
-                    if self._icon.visible:
+                while True:
+                    try:
                         self._icon.title = _get_tooltip()
+                    except Exception:
+                        break
                     _time.sleep(5)
             threading.Thread(target=refresh, daemon=True).start()
             self._icon.run()

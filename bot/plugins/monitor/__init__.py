@@ -21,8 +21,11 @@ async def _on_startup():
     """Bot 启动时：初始化数据库 + 启动调度器 + 托盘图标"""
     logger.info("QQ_Monitor_Bot 启动中...")
 
-    # 启动托盘图标（独立线程）
-    tray.start()
+    # 启动托盘图标（独立线程，失败不影响核心功能）
+    try:
+        tray.start()
+    except Exception as e:
+        logger.warning(f"托盘图标启动失败: {e}")
     update_status(alive=True)
 
     await start()
