@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from nonebot import get_bot
+from nonebot import get_bot, logger as nb_logger
 
 from config import config
 from .database import init_db, list_targets
