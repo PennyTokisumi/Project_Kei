@@ -181,7 +181,9 @@ async def reload_targets():
         scheduler.remove_job(job_id)
         logger.info(f"移除轮询任务 [{job_id}]")
 
-    # 首次启动
+    # 确保调度器在运行
     if not scheduler.running and targets:
         scheduler.start()
         logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
+    elif scheduler.running:
+        logger.info(f"调度器已刷新，共 {len(targets)} 个监测目标")
