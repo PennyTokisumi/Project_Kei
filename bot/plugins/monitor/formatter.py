@@ -23,7 +23,7 @@ def build_live_message(item: Item) -> Message:
         f"\n主播：{item.nickname}\n"
         f"标题：{item.title}\n"
         f"\n"
-        f"🔗 {item.link}"
+        f"链接：{item.link}"
     )
     segs.append(MessageSegment.text(text))
     return segs
@@ -48,7 +48,7 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
             content_parts.append(MessageSegment.image(item.cover_url))
 
         # 原文链接
-        content_parts.append(MessageSegment.text(f"\n🔗 {item.link}"))
+        content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
 
         node = {
             "type": "node",

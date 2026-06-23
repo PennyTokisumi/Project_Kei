@@ -10,7 +10,7 @@ from .base import Item, SourceBase
 BILIBILI_LIVE_API = (
     "https://api.live.bilibili.com/room/v1/Room/get_info?room_id={room_id}"
 )
-BILIBILI_USER_API = "https://api.bilibili.com/x/space/wbi/acc/info?mid={uid}"
+BILIBILI_USER_API = "https://api.bilibili.com/x/web-interface/card?mid={uid}"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -38,12 +38,12 @@ class BilibiliLive(SourceBase):
                 resp = await client.get(
                     BILIBILI_USER_API.format(uid=uid),
                     headers={"User-Agent": HEADERS["User-Agent"],
-                             "Referer": "https://space.bilibili.com/"},
+                             "Referer": "https://www.bilibili.com/"},
                 )
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("code") == 0:
-                        return data["data"].get("name", "")
+                        return data["data"]["card"].get("name", "")
         except Exception:
             pass
         return ""
