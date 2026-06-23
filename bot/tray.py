@@ -151,9 +151,15 @@ class TrayIcon:
         )
         self._icon.menu = self._build_menu()
 
-        # 定时刷新菜单（响应自启状态变化）
         def run():
             import time as _time
+            # 每 5 秒刷新 tooltip
+            def refresh():
+                while not self._icon._stopped:
+                    if self._icon.visible:
+                        self._icon.title = _get_tooltip()
+                    _time.sleep(5)
+            threading.Thread(target=refresh, daemon=True).start()
             self._icon.run()
 
         self._thread = threading.Thread(target=run, daemon=True)
