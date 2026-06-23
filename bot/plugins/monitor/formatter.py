@@ -20,9 +20,8 @@ def build_live_message(item: Item) -> Message:
         segs.append(MessageSegment.image(item.cover_url))
 
     text = (
-        f"\n主播：{item.nickname}\n"
-        f"标题：{item.title}\n"
-        f"\n"
+        f"\n标题：{item.title}\n"
+        f"主播：{item.nickname}\n"
         f"链接：{item.link}"
     )
     segs.append(MessageSegment.text(text))
