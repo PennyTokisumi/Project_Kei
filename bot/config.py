@@ -13,7 +13,7 @@ class Config(BaseSettings):
     onebot_ws_hosts: list[dict] = Field(default=[{"host": "127.0.0.1", "port": 8080}])
 
     # 监测
-    poll_interval: int = Field(default=60, description="轮询间隔（秒）")
+    poll_interval: int = Field(default=30, description="轮询间隔（秒）")
     db_path: str = Field(default="db.sqlite3")
 
     # 日志

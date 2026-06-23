@@ -4,6 +4,7 @@ from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Bot, Message
 from nonebot.rule import to_me, startswith
 
+from config import config
 from ..monitor.database import add_target, remove_target, list_targets, get_target
 from ..monitor.scheduler import reload_targets
 
@@ -141,7 +142,7 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
         f"  ├ 运行平台: Windows",
         f"  ├ 总监测目标: {len(all_targets)} 个",
         f"  ├ 本群目标: {len(group_targets)} 个",
-        f"  ├ 轮询间隔: 60 秒",
+        f"  ├ 轮询间隔: {config.poll_interval} 秒",
         f"  └ 数据源: B站动态/B站直播/斗鱼直播",
     ]
     await status_cmd.finish(
