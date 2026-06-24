@@ -13,6 +13,7 @@ add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
 list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
+help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
 
 
 @add_cmd.handle()
@@ -141,6 +142,26 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
         f"  └ 数据源: B站动态/B站直播/斗鱼直播",
     ]
     await status_cmd.finish(
+        Message("\n".join(lines)),
+        at_sender=True,
+    )
+
+
+@help_cmd.handle()
+async def handle_help(bot: Bot, event: GroupMessageEvent):
+    """显示帮助信息"""
+    lines = [
+        "🤖 QQ_Monitor_Bot 指令",
+        "",
+        "add bilibili_dynamic <UID>     B站动态监测",
+        "add bilibili_live <房间号>       B站直播监测",
+        "add douyu_live <房间号>        斗鱼直播监测",
+        "list                          本群监测列表",
+        "remove <序号>                   移除监测",
+        "status                        机器人状态",
+        "help                          本帮助",
+    ]
+    await help_cmd.finish(
         Message("\n".join(lines)),
         at_sender=True,
     )
