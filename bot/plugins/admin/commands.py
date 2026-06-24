@@ -80,9 +80,9 @@ async def handle_list(bot: Bot, event: GroupMessageEvent):
         )
 
     lines = ["📋 本群监测列表："]
-    for t in targets:
+    for idx, t in enumerate(targets, 1):
         name = t.get("target_name") or t["target_id"]
-        lines.append(f"  {t['id']}. [{t['platform']}] {name}")
+        lines.append(f"  {idx}. [{t['platform']}] {name}")
 
     await list_cmd.finish(
         Message("\n".join(lines)),
@@ -106,22 +106,17 @@ async def handle_remove(bot: Bot, event: GroupMessageEvent):
             at_sender=True,
         )
 
-    target_id = int(parts[1].strip())
-    target = get_target(target_id)
+    idx = int(parts[1].strip())
+    targets = [t for t in list_targets() if t["group_id"] == event.group_id]
 
-    if target is None:
+    if idx < 1 or idx > len(targets):
         await remove_cmd.finish(
-            Message(f"❌ 未找到 ID={target_id} 的监测目标"),
+            Message(f"❌ 序号 {idx} 不存在，使用 list 查看有效序号"),
             at_sender=True,
         )
 
-    if target.get("group_id") != event.group_id:
-        await remove_cmd.finish(
-            Message("❌ 只能移除本群的监测目标"),
-            at_sender=True,
-        )
-
-    remove_target(target_id)
+    target = targets[idx - 1]
+    remove_target(target["id"])
     await remove_cmd.send(
         Message(f"✅ 已移除 [{target['platform']}] {target['target_id']}"),
         at_sender=True,
