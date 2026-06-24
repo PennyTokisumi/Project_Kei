@@ -17,7 +17,7 @@ except ImportError:
 logger = logging.getLogger("tray")
 
 # ─── Windows 开机自启动 ────────────────────────────────────────
-STARTUP_NAME = "QQ_Monitor_Bot.lnk"
+STARTUP_NAME = "Project_Kei.lnk"
 
 
 def _get_startup_dir() -> Path:
@@ -62,7 +62,7 @@ Set link = WshShell.CreateShortcut("{shortcut_path}")
 link.TargetPath = "{target}"
 link.WorkingDirectory = "{target.parent}"
 link.WindowStyle = 7
-link.Description = "QQ_Monitor_Bot 启动"
+link.Description = "Project_Kei 启动"
 link.Save
 '''
     # 写入临时 vbs 并执行
@@ -104,13 +104,13 @@ def _get_tooltip() -> str:
         alive = _status["alive"]
         ready = _status["ready"]
     if not ready:
-        return "QQ_Monitor_Bot | 启动中..."
+        return "Project_Kei | 启动中..."
     if alive:
         if total == 0:
-            return "QQ_Monitor_Bot | 运行中 | 暂无监测目标"
-        return f"QQ_Monitor_Bot | 运行中 | 监测: {total}个目标"
+            return "Project_Kei | 运行中 | 暂无监测目标"
+        return f"Project_Kei | 运行中 | 监测: {total}个目标"
     else:
-        return "QQ_Monitor_Bot | 异常 | 请检查日志"
+        return "Project_Kei | 异常 | 请检查日志"
 
 
 def _create_icon(healthy: bool = True) -> Image.Image:
@@ -158,9 +158,9 @@ class TrayIcon:
         # 启动中显示黄点
         icon_image = _create_icon(healthy=False)
         self._icon = pystray.Icon(
-            "QQ_Monitor_Bot",
+            "Project_Kei",
             icon_image,
-            title="QQ_Monitor_Bot | 启动中...",
+            title="Project_Kei | 启动中...",
         )
         self._icon.menu = self._build_menu()
 

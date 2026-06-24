@@ -1,11 +1,11 @@
 ﻿@echo off
 chcp 65001 >nul
-title QQ_Monitor_Bot 启动
+title Project Kei 启动
 
 set "ROOT=%~dp0"
 
 echo =============================================
-echo   QQ_Monitor_Bot
+echo   Project Kei
 echo =============================================
 echo.
 

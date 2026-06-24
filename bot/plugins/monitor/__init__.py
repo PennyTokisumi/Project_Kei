@@ -1,4 +1,4 @@
-"""QQ_Monitor_Bot - B站动态/直播 + 斗鱼直播 监测推送插件"""
+"""Project_Kei - B站动态/直播 + 斗鱼直播 监测推送插件"""
 
 from nonebot import get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
@@ -18,7 +18,7 @@ _greeting_sent = False
 
 @driver.on_startup
 async def _on_startup():
-    nb_logger.info("QQ_Monitor_Bot 启动调度器...")
+    nb_logger.info("Project_Kei 启动调度器...")
     try:
         tray.start()
     except Exception as e:
@@ -55,13 +55,13 @@ async def _on_connect(bot: Bot):
 
     # 切换托盘为绿点
     tray.set_ready()
-    nb_logger.info("QQ_Monitor_Bot 启动完成")
+    nb_logger.info("Project_Kei 启动完成")
 
 
 @driver.on_shutdown
 async def _on_shutdown():
-    nb_logger.info("QQ_Monitor_Bot 关闭中...")
+    nb_logger.info("Project_Kei 关闭中...")
     update_status(alive=False)
     await stop()
     tray.stop()
-    nb_logger.info("QQ_Monitor_Bot 已关闭")
+    nb_logger.info("Project_Kei 已关闭")

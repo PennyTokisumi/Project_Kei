@@ -91,7 +91,7 @@ class DouyuLive(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     url,
-                    headers={"User-Agent": "QQ_Monitor_Bot/1.0"},
+                    headers={"User-Agent": "Project_Kei/1.0"},
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -145,7 +145,7 @@ class DouyuLive(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     url,
-                    headers={"User-Agent": "QQ_Monitor_Bot/1.0"},
+                    headers={"User-Agent": "Project_Kei/1.0"},
                 )
                 if resp.status_code == 200:
                     data = resp.json()
