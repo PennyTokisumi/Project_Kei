@@ -1,10 +1,10 @@
 """B站直播监测 - 直连 B站直播 API"""
 
-import re
 from typing import Optional
 
 from httpx import AsyncClient
 
+from config import config
 from .base import Item, SourceBase
 
 BILIBILI_LIVE_API = (
@@ -12,12 +12,20 @@ BILIBILI_LIVE_API = (
 )
 BILIBILI_USER_API = "https://api.bilibili.com/x/web-interface/card?mid={uid}"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://live.bilibili.com/",
-}
+
+def _make_headers(referer: str = "https://live.bilibili.com/") -> dict:
+    """构建请求头，包含 Cookie（如已配置）"""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": referer,
+    }
+    if config.bilibili_cookie:
+        headers["Cookie"] = config.bilibili_cookie
+    return headers
 
 
 class BilibiliLive(SourceBase):
@@ -37,8 +45,7 @@ class BilibiliLive(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     BILIBILI_USER_API.format(uid=uid),
-                    headers={"User-Agent": HEADERS["User-Agent"],
-                             "Referer": "https://www.bilibili.com/"},
+                    headers=_make_headers("https://www.bilibili.com/"),
                 )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -53,7 +60,7 @@ class BilibiliLive(SourceBase):
         url = BILIBILI_LIVE_API.format(room_id=self.target_id)
         try:
             async with AsyncClient(timeout=10) as client:
-                resp = await client.get(url, headers=HEADERS)
+                resp = await client.get(url, headers=_make_headers())
                 resp.raise_for_status()
                 data = resp.json()
         except Exception:
@@ -85,15 +92,27 @@ class BilibiliLive(SourceBase):
             content=room.get("title", ""),
             link=f"https://live.bilibili.com/{self.target_id}",
             cover_url=room.get("user_cover"),
+            extra={
+                "area_name": room.get("area_name", ""),
+            },
         )
         return [item]
 
     async def get_display_name(self) -> str:
-        """获取主播名"""
+        """获取主播名（独立请求，不依赖直播状态）"""
         try:
-            items = await self.fetch()
-            if items:
-                return items[0].nickname
+            # 先通过直播间 API 获取 UID，再查用户名
+            url = BILIBILI_LIVE_API.format(room_id=self.target_id)
+            async with AsyncClient(timeout=10) as client:
+                resp = await client.get(url, headers=_make_headers())
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("code") == 0:
+                        uid = data["data"].get("uid", 0)
+                        if uid:
+                            name = await self._get_username(uid)
+                            if name:
+                                return name
         except Exception:
             pass
         return self.target_id

@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from nonebot import get_bot, logger as nb_logger
 
 from config import config
-from .database import init_db, list_targets
+from .database import has_pushed_items, init_db, list_targets
 from .dedup import dedup
 from .formatter import send_live_notification, send_dynamic_forward
 from .sources.base import SourceBase
@@ -39,32 +39,52 @@ async def poll_source(source: SourceBase):
         nb_logger.error(f"抓取失败 [{source.platform}/{source.target_id}]: {e}")
         return
 
+    is_live = source.source_type == "live"
+
     if not items:
+        # 直播源下播时更新状态，确保下次开播能检测到 off→on
+        if is_live:
+            tracker = LiveStatusTracker(source.target_id, source.platform)
+            tracker.check_and_update(is_living=False, title="")
         return
 
-    # 判断类型
-    is_live = source.source_type == "live"
     new_items = []
 
     for item in items:
-        is_new = dedup.is_new(
-            item.platform, item.source_type,
-            item.target_id, item.id,
-        )
-        if not is_new:
-            continue
-
-        # 直播类需要额外做 off→on 检测
         if is_live:
+            # 直播类：不做 dedup 去重，交给 LiveStatusTracker 做 off→on 检测
             tracker = LiveStatusTracker(item.target_id, item.platform)
             detected = tracker.check_and_update(is_living=True, title=item.title)
             if not detected:
-                continue  # 已经在直播中，不是刚开播
+                continue
+        else:
+            # 动态类：通过 dedup 去重，避免重复推送
+            is_new = dedup.is_new(
+                item.platform, item.source_type,
+                item.target_id, item.id,
+            )
+            if not is_new:
+                continue
 
         new_items.append(item)
 
     if not new_items:
         return
+
+    # 动态类首次抓取：静默标记历史动态，不推送
+    if not is_live:
+        if not has_pushed_items(source.platform, source.target_id):
+            for item in new_items:
+                dedup.mark_pushed(
+                    item.platform, item.source_type,
+                    item.target_id, item.id,
+                    item.title, item.link,
+                )
+            nb_logger.info(
+                f"首次抓取 [{source.platform}/{source.target_id}]"
+                f" 静默标记 {len(new_items)} 条历史动态"
+            )
+            return
 
     # 推送（成功后再标记已推送，防止推送失败丢失内容）
     try:
@@ -78,15 +98,21 @@ async def poll_source(source: SourceBase):
             nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
     except Exception as e:
         nb_logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
-        return  # 推送失败，不标记已推送
+        # 直播推送失败时回滚状态，下次轮询可重试
+        if is_live:
+            for item in new_items:
+                tracker = LiveStatusTracker(item.target_id, item.platform)
+                tracker.check_and_update(is_living=False, title="")
+        return
 
-    # 推送成功后标记
+    # 推送成功后标记（动态类才需要去重标记）
     for item in new_items:
-        dedup.mark_pushed(
-            item.platform, item.source_type,
-            item.target_id, item.id,
-            item.title, item.link,
-        )
+        if not is_live:
+            dedup.mark_pushed(
+                item.platform, item.source_type,
+                item.target_id, item.id,
+                item.title, item.link,
+            )
 
 
 def _make_source(target: dict) -> Optional[SourceBase]:
@@ -103,8 +129,14 @@ def _make_source(target: dict) -> Optional[SourceBase]:
 
 
 async def start():
-    """启动调度器：初始化 DB → 加载所有目标 → 注册定时任务"""
+    """启动调度器：初始化 DB → 清理 → 加载所有目标 → 注册定时任务"""
     init_db()
+
+    # 清理 30 天前的推送记录，防止 DB 无限膨胀
+    from .database import cleanup_old_pushed
+    cleaned = cleanup_old_pushed(days=30)
+    if cleaned:
+        nb_logger.info(f"清理了 {cleaned} 条过期推送记录")
 
     # 防止重复 start
     if scheduler.running:

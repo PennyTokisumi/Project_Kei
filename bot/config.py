@@ -16,6 +16,12 @@ class Config(BaseSettings):
     poll_interval: int = Field(default=30, description="轮询间隔（秒）")
     db_path: str = Field(default="db.sqlite3")
 
+    # B站
+    bilibili_cookie: str = Field(
+        default="",
+        description="B站 Cookie 字符串，如 buvid3=xxx; SESSDATA=xxx; 提高 API 稳定性",
+    )
+
     # 日志
     log_level: str = Field(default="INFO")
 

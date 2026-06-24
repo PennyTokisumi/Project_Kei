@@ -119,6 +119,17 @@ def get_target(target_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def cleanup_old_pushed(days: int = 30):
+    """清理 N 天前的推送记录，防止 DB 无限膨胀"""
+    conn = get_conn()
+    cur = conn.execute(
+        "DELETE FROM pushed_items WHERE pushed_at < datetime('now', ?)",
+        (f"-{days} days",),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
 # ─── 去重 ────────────────────────────────────────────────────────
 
 
@@ -140,6 +151,16 @@ def mark_pushed(item_id: str, platform: str, target_id: str,
         (item_id, platform, target_id, item_type, title, link),
     )
     conn.commit()
+
+
+def has_pushed_items(platform: str, target_id: str) -> bool:
+    """检查该目标是否有过推送记录（用于判断是否首次抓取）"""
+    conn = get_conn()
+    cur = conn.execute(
+        "SELECT 1 FROM pushed_items WHERE platform=? AND target_id=? LIMIT 1",
+        (platform, target_id),
+    )
+    return cur.fetchone() is not None
 
 
 # ─── 直播状态 ────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 [project]
 name = "QQ_Monitor_Bot"
-version = "0.1.0"
+version = "1.0"
 description = "QQ 群监测机器人 - B站动态/直播 + 斗鱼直播推送"
 requires-python = ">=3.12"
 dependencies = [

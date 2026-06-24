@@ -1,12 +1,10 @@
 nonebot2>=2.4.0
 nonebot-adapter-onebot>=2.4.0
-fastapi>=0.100
-uvicorn>=0.20
-websockets>=10.0
 httpx>=0.28.0
 feedparser>=6.0
 apscheduler>=3.10
 pydantic>=2.0
 pydantic-settings>=2.0
+aiofiles>=24.0
 pystray>=0.19
 Pillow>=10.0

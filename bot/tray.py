@@ -2,6 +2,8 @@
 
 import logging
 import os
+import signal
+import subprocess
 import threading
 from pathlib import Path
 
@@ -75,6 +77,7 @@ link.Save
 _status = {
     "targets_total": 0,
     "alive": True,
+    "ready": False,
 }
 _lock = threading.Lock()
 
@@ -88,11 +91,20 @@ def update_status(*, targets_total: int = None, alive: bool = None):
             _status["alive"] = alive
 
 
+def set_ready():
+    """标记启动完成，供 TrayIcon.set_ready 调用"""
+    with _lock:
+        _status["ready"] = True
+
+
 def _get_tooltip() -> str:
     """生成悬停提示文字"""
     with _lock:
         total = _status["targets_total"]
         alive = _status["alive"]
+        ready = _status["ready"]
+    if not ready:
+        return "QQ_Monitor_Bot | 启动中..."
     if alive:
         if total == 0:
             return "QQ_Monitor_Bot | 运行中 | 暂无监测目标"
@@ -143,11 +155,12 @@ class TrayIcon:
             logger.warning("pystray 未安装，托盘图标不可用")
             return
 
-        icon_image = _create_icon(healthy=True)
+        # 启动中显示黄点
+        icon_image = _create_icon(healthy=False)
         self._icon = pystray.Icon(
             "QQ_Monitor_Bot",
             icon_image,
-            title=_get_tooltip(),
+            title="QQ_Monitor_Bot | 启动中...",
         )
         self._icon.menu = self._build_menu()
 
@@ -174,6 +187,14 @@ class TrayIcon:
             self._icon.stop()
             logger.info("托盘图标已停止")
 
+    def set_ready(self):
+        """标记启动完成，图标从黄点切换为绿点，tooltip 切换为运行中"""
+        set_ready()  # 更新模块级 status
+        if self._icon:
+            self._icon.icon = _create_icon(healthy=True)
+            self._icon.title = _get_tooltip()
+            logger.info("托盘图标: 就绪（绿点）")
+
     def _toggle_autostart(self, icon: "pystray.Icon", item):
         """切换开机自启"""
         new_state = not is_autostart_enabled()
@@ -182,10 +203,34 @@ class TrayIcon:
         icon.menu = self._build_menu()
 
     def _on_shutdown(self, icon: "pystray.Icon", item):
-        """右键关闭机器人"""
+        """右键关闭机器人 — 安全关闭所有相关进程"""
         icon.stop()
-        # 发送 SIGINT 让 NoneBot2 优雅退出
+        _kill_napcat()
         os._exit(0)
+
+
+# ─── 进程管理 ──────────────────────────────────────────────────
+
+def _kill_napcat():
+    """杀掉 NapCatQQ 所有相关进程（按命令行匹配 napcat 关键字）"""
+    try:
+        # 用 wmic 查找命令行含 napcat 的进程 PID
+        out = subprocess.run(
+            'wmic process where "commandline like \'%%napcat%%\'" get processid /format:csv',
+            shell=True, capture_output=True, text=True, timeout=10,
+        ).stdout
+        for line in out.strip().splitlines():
+            parts = line.split(",")
+            for p in parts:
+                p = p.strip()
+                if p.isdigit():
+                    try:
+                        os.kill(int(p), signal.SIGTERM)
+                        logger.info(f"已终止 NapCat 进程 PID={p}")
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.warning(f"终止 NapCat 失败: {e}")
 
 
 # 全局单例

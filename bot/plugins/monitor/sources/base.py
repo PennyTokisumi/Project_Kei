@@ -16,7 +16,8 @@ class Item:
     nickname: str            # 主播/用户昵称
     content: str             # 正文（动态内容或直播标题）
     link: str                # 跳转链接
-    cover_url: Optional[str] = None  # 封面图 URL
+    cover_url: Optional[str] = None  # 封面图 URL（首张，保留兼容）
+    cover_urls: list[str] = field(default_factory=list)  # 全部图片 URL
     extra: dict = field(default_factory=dict)  # 平台特有扩展信息
 
 

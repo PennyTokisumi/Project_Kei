@@ -12,6 +12,7 @@ def build_live_message(item: Item) -> Message:
         [封面图]
         主播：{nickname}
         标题：{title}
+        游戏：{game_name}（如有）
         🔗 {link}
     """
     segs = Message()
@@ -19,12 +20,17 @@ def build_live_message(item: Item) -> Message:
     if item.cover_url:
         segs.append(MessageSegment.image(item.cover_url))
 
-    text = (
-        f"标题：{item.title}\n"
-        f"主播：{item.nickname}\n"
-        f"链接：{item.link}"
-    )
-    segs.append(MessageSegment.text(text))
+    parts = [
+        f"标题：{item.title}",
+        f"主播：{item.nickname}",
+    ]
+    # 游戏/分区（斗鱼 game_name / B站 area_name）
+    category = item.extra.get("game_name") or item.extra.get("area_name", "")
+    if category:
+        parts.append(f"分类：{category}")
+    parts.append(f"链接：{item.link}")
+
+    segs.append(MessageSegment.text("\n".join(parts)))
     return segs
 
 
@@ -42,11 +48,16 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
         if item.content:
             content_parts.append(MessageSegment.text(item.content + "\n"))
 
-        # 封面图
-        if item.cover_url:
+        # 图片（优先多图，否则单图）
+        if item.cover_urls:
+            for url in item.cover_urls:
+                content_parts.append(MessageSegment.image(url))
+        elif item.cover_url:
             content_parts.append(MessageSegment.image(item.cover_url))
 
-        # 原文链接
+        # 来源 + 原文链接
+        if item.nickname:
+            content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
         content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
 
         node = {

@@ -1,28 +1,46 @@
-"""B站动态监测 - 直连 B站 API（原创 & 视频投稿）"""
+"""B站动态监测 - 直连 B站 API（仅原创动态 & 视频投稿）"""
 
 import re
 from typing import Optional
 
 from httpx import AsyncClient
 
+from config import config
+from utils.wbi import sign_params
 from .base import Item, SourceBase
 
+# ─── B站 API 端点 ──────────────────────────────────────────
 BILIBILI_DYNAMIC_API = (
     "https://api.bilibili.com/x/polymer/web-dynamic/v1/feed/space"
-    "?host_mid={uid}&offset="
+    "?host_mid={uid}&features=itemOpusStyle,opusCard&offset="
 )
-BILIBILI_USER_API = "https://api.bilibili.com/x/space/wbi/acc/info?mid={uid}"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://space.bilibili.com/",
-}
+
+def _make_headers() -> dict:
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Referer": "https://space.bilibili.com/",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Origin": "https://space.bilibili.com",
+    }
+    if config.bilibili_cookie:
+        headers["Cookie"] = config.bilibili_cookie
+    return headers
 
 
 class BilibiliDynamic(SourceBase):
-    """B站动态监测源"""
+    """B站动态监测源 — 仅推送原创内容"""
+
+    _WANTED_TYPES = frozenset({
+        "DYNAMIC_TYPE_DRAW",   # 图文 / 纯文字（OPUS）
+        "DYNAMIC_TYPE_WORD",   # 纯文字（旧版）
+        "DYNAMIC_TYPE_AV",     # 视频投稿
+    })
 
     @property
     def platform(self) -> str:
@@ -32,15 +50,13 @@ class BilibiliDynamic(SourceBase):
     def source_type(self) -> str:
         return "dynamic"
 
-    async def fetch(self) -> list[Item]:
-        """拉取 B站用户最新动态（原创 & 视频投稿）
+    # ─── 主入口 ──────────────────────────────────────────
 
-        过滤转发动态，只保留原创内容。
-        """
+    async def fetch(self) -> list[Item]:
         url = BILIBILI_DYNAMIC_API.format(uid=self.target_id)
         try:
             async with AsyncClient(timeout=15) as client:
-                resp = await client.get(url, headers=HEADERS)
+                resp = await client.get(url, headers=_make_headers())
                 resp.raise_for_status()
                 data = resp.json()
         except Exception:
@@ -50,64 +66,102 @@ class BilibiliDynamic(SourceBase):
             return []
 
         items_list = data.get("data", {}).get("items", [])
-        if not items_list:
-            return []
+        return [
+            item
+            for dyn in items_list
+            if (item := self._parse_dynamic(dyn)) is not None
+        ]
 
-        result: list[Item] = []
-        for dyn in items_list:
-            # 解析模块内容
-            modules = dyn.get("modules", {})
-            desc = modules.get("module_dynamic", {}).get("desc", {})
-            author = modules.get("module_author", {})
+    # ─── 解析 ────────────────────────────────────────────
 
-            dyn_type = desc.get("type", "")
+    def _parse_dynamic(self, dyn: dict) -> Optional[Item]:
+        modules = dyn.get("modules", {})
+        desc = modules.get("module_dynamic", {}).get("desc") or {}
+        author = modules.get("module_author", {})
+        major = modules.get("module_dynamic", {}).get("major") or {}
 
-            # 只保留原创动态和视频投稿
-            # DYNAMIC_TYPE_DRAW=2, DYNAMIC_TYPE_WORD=4, DYNAMIC_TYPE_AV=8
-            if dyn_type not in ("DYNAMIC_TYPE_DRAW", "DYNAMIC_TYPE_WORD",
-                                 "DYNAMIC_TYPE_AV"):
-                continue
+        # type：新版在顶层，旧版在 desc 中
+        dyn_type = dyn.get("type") or desc.get("type", "")
+        if dyn_type not in self._WANTED_TYPES:
+            return None
 
-            dyn_id = dyn.get("id_str", str(dyn.get("id", "")))
-            nickname = author.get("name", "")
-            text = desc.get("text", "")
-            link = f"https://t.bilibili.com/{dyn_id}"
+        dyn_id = dyn.get("id_str", str(dyn.get("id", "")))
+        nickname = author.get("name", "")
 
-            # 提取封面图
-            cover_url = None
-            if dyn_type == "DYNAMIC_TYPE_DRAW":
-                major = modules.get("module_dynamic", {}).get("major")
-                if major and major.get("draw"):
-                    items_draw = major["draw"].get("items", [])
-                    if items_draw:
-                        cover_url = items_draw[0].get("src")
+        # ── 文字：优先 OPUS，其次 desc ──
+        opus = major.get("opus") or {}
+        opus_title = opus.get("title", "")
+        opus_text = (opus.get("summary") or {}).get("text", "")
 
-            # 清理文本
-            clean_content = re.sub(r'<[^>]+>', '', text).strip()
-            if len(clean_content) > 500:
-                clean_content = clean_content[:500] + "..."
+        if opus_title or opus_text:
+            # OPUS 格式：标题 + 正文
+            parts = []
+            if opus_title:
+                parts.append(opus_title)
+            if opus_text and opus_text != opus_title:
+                parts.append(opus_text)
+            raw_text = "\n".join(parts)
+        else:
+            # 旧格式：desc.text
+            raw_text = desc.get("text", "") if desc else ""
 
-            result.append(Item(
-                id=dyn_id,
-                platform=self.platform,
-                source_type=self.source_type,
-                target_id=self.target_id,
-                title=clean_content[:50] or f"{nickname}的动态",
-                nickname=nickname,
-                content=clean_content,
-                link=link,
-                cover_url=cover_url,
-            ))
+        clean_content = re.sub(r'<[^>]+>', '', raw_text).strip()
 
-        return result
+        # 标题取前 50 字
+        title = clean_content[:50] if clean_content else f"{nickname}的动态"
+
+        # ── 图片：OPUS 用 pics，旧版用 draw ──
+        cover_url, cover_urls = self._extract_images(opus, major, dyn_type)
+
+        return Item(
+            id=dyn_id,
+            platform=self.platform,
+            source_type=self.source_type,
+            target_id=self.target_id,
+            title=title,
+            nickname=nickname,
+            content=clean_content,
+            link=f"https://t.bilibili.com/{dyn_id}",
+            cover_url=cover_url,
+            cover_urls=cover_urls,
+        )
+
+    # ─── 图片提取 ─────────────────────────────────────────
+
+    @staticmethod
+    def _extract_images(opus: dict, major: dict,
+                        dyn_type: str) -> tuple[Optional[str], list[str]]:
+        """提取图片：OPUS.pics > major.draw > major.archive"""
+        # OPUS 格式
+        pics = opus.get("pics") or []
+        if pics:
+            urls = [p.get("url", "") for p in pics if p.get("url")]
+            return (urls[0] if urls else None), urls
+
+        # major.draw（新旧通用）
+        major_type = major.get("type", "") or dyn_type
+        if major_type in ("MAJOR_TYPE_DRAW", "DYNAMIC_TYPE_DRAW"):
+            items_list = (major.get("draw") or {}).get("items", [])
+            urls = [d.get("src") for d in items_list if d.get("src")]
+            return (urls[0] if urls else None), urls
+
+        # major.archive（视频）
+        if major_type in ("MAJOR_TYPE_ARCHIVE", "DYNAMIC_TYPE_AV"):
+            archive = major.get("archive") or {}
+            cover = archive.get("cover")
+            return cover, [cover] if cover else []
+
+        return None, []
+
+    # ─── 用户昵称 ─────────────────────────────────────────
 
     async def get_display_name(self) -> str:
-        """获取用户昵称"""
         try:
+            params = await sign_params({"mid": self.target_id})
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
-                    BILIBILI_USER_API.format(uid=self.target_id),
-                    headers=HEADERS,
+                    "https://api.bilibili.com/x/space/wbi/acc/info",
+                    params=params, headers=_make_headers(),
                 )
                 if resp.status_code == 200:
                     data = resp.json()

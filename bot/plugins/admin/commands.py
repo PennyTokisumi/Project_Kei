@@ -5,7 +5,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Bot, Message
 from nonebot.rule import to_me, startswith
 
 from config import config
-from ..monitor.database import add_target, remove_target, list_targets, get_target
+from ..monitor.database import add_target, remove_target, list_targets
 from ..monitor.scheduler import reload_targets
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
@@ -58,7 +58,7 @@ async def handle_add(bot: Bot, event: GroupMessageEvent):
         )
 
     # 添加
-    row_id = add_target(group_id, platform, str(target_id_int), "")
+    add_target(group_id, platform, str(target_id_int), "")
     await add_cmd.send(
         Message(f"✅ 已添加监测 [{platform}] ID: {target_id_int}"),
         at_sender=True,
@@ -93,11 +93,18 @@ async def handle_list(bot: Bot, event: GroupMessageEvent):
 
 @remove_cmd.handle()
 async def handle_remove(bot: Bot, event: GroupMessageEvent):
-    """移除监测目标
+    """移除监测目标（仅群主/管理员可用）
 
     格式: remove <id>
     id 通过 list 命令查看
     """
+    # 权限校验：仅群主或管理员可用
+    if event.sender.role not in ("owner", "admin"):
+        await remove_cmd.finish(
+            Message("正因如此，你没有资格啊。"),
+            at_sender=True,
+        )
+
     text = event.get_plaintext().strip()
     parts = text.split()
 
@@ -153,13 +160,14 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
     lines = [
         "🤖 QQ_Monitor_Bot 指令",
         "",
-        "add bilibili_dynamic <UID>     B站动态监测",
-        "add bilibili_live <房间号>       B站直播监测",
-        "add douyu_live <房间号>        斗鱼直播监测",
-        "list                          本群监测列表",
-        "remove <序号>                   移除监测",
-        "status                        机器人状态",
-        "help                          本帮助",
+        "  help                        显示本帮助",
+        "  status                      机器人运行状态",
+        "  list                        本群监测列表",
+        "  remove <序号>                移除监测目标",
+        "",
+        "  add bilibili_live <房间号>     添加 B站 直播监测",
+        "  add bilibili_dynamic <UID>   添加 B站 动态监测",
+        "  add douyu_live <房间号>       添加 斗鱼 直播监测",
     ]
     await help_cmd.finish(
         Message("\n".join(lines)),

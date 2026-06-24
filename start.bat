@@ -1,35 +1,46 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
-title QQ_Monitor_Bot 启动面板
+title QQ_Monitor_Bot 启动
 
-echo ========================================
-echo   QQ_Monitor_Bot - 启动所有组件
-echo ========================================
-echo.
-
-:: ===== 获取脚本所在目录 =====
 set "ROOT=%~dp0"
-set "ROOT=%ROOT:~0,-1%"
 
-:: ===== 1. 启动 NapCatQQ =====
-echo [1/2] 启动 NapCatQQ...
-for /d %%i in ("%ROOT%\napcat\NapCat.*.Shell") do set "NAPCAT_DIR=%%i"
-if not exist "%NAPCAT_DIR%\napcat.bat" (
-    echo   ! 未找到 NapCatQQ，请先安装
-) else (
-    start "NapCat" cmd /c "cd /d "%NAPCAT_DIR%" && napcat.bat 2>&1"
+echo =============================================
+echo   QQ_Monitor_Bot
+echo =============================================
+echo.
+
+:: ===== 1. NapCat =====
+echo [1/2] 启动 NapCatQQ ...
+for /d %%i in ("%ROOT%napcat\NapCat.*.Shell") do set "NC=%%i"
+if not defined NC (
+    echo   [ERR] 未找到 NapCat 目录
+    pause
+    exit /b 1
 )
+
+:: 生成隐藏启动 VBS
+set "VBS=%TEMP%\nc_hidden.vbs"
+(echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%NC%"" && napcat.bat", 0, False) > "%VBS%"
+cscript //nologo "%VBS%"
+del "%VBS%"
+echo   [OK] NapCatQQ 已启动（后台）
+
+:: 自动打开 WebUI
+echo   打开管理面板 ...
+start http://127.0.0.1:6099/webui/
+
+:: ===== 2. NoneBot =====
+echo [2/2] 启动 NoneBot ...
+timeout /t 8 /nobreak >nul
+
+set "VBS=%TEMP%\nb_hidden.vbs"
+(echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%ROOT%bot"" && ""%ROOT%.venv\Scripts\python.exe"" bot.py", 0, False) > "%VBS%"
+cscript //nologo "%VBS%"
+del "%VBS%"
+
+echo.
+echo   全部启动完成（后台运行）
+echo   托盘右键可管理机器人
+echo   5秒后自动关闭此窗口
 timeout /t 5 /nobreak >nul
-
-:: ===== 2. 启动 NoneBot2 =====
-echo [2/2] 启动 NoneBot2 (WebSocket 端口 8080)...
-start "NoneBot2" cmd /c "cd /d "%ROOT%\bot" && "%ROOT%\.venv\Scripts\python.exe" bot.py 2>&1"
-
-echo.
-echo 所有组件已启动！
-echo   NapCatQQ: WebUI http://127.0.0.1:6099/webui
-echo   NoneBot2: WebSocket 8080
-echo.
-echo 关闭所有窗口即可停止，或运行 stop.bat
-echo ========================================
-pause
+exit
