@@ -1,7 +1,5 @@
 """B站直播监测 - 直连 B站直播 API"""
 
-from typing import Optional
-
 from httpx import AsyncClient
 
 from config import config
