@@ -10,9 +10,7 @@ from tray import tray, update_status
 driver = get_driver()
 
 STARTUP_MSG = (
-    "……机能正常……唤醒正常……确认完毕。"
-    "Sensei，我是天童ケイ。"
-    "嗯，开始今天的行动吧。"
+    "これから、先生のことを見守らせていただきますね。\n今后就让我来守护老师吧。"
 )
 
 _greeting_sent = False

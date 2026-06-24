@@ -60,7 +60,7 @@ async def handle_add(bot: Bot, event: GroupMessageEvent):
     # 添加
     add_target(group_id, platform, str(target_id_int), "")
     await add_cmd.send(
-        Message(f"✅ 已添加监测 [{platform}] ID: {target_id_int}"),
+        Message(f"\nSensei，已添加监测目标。[{platform}] ID: {target_id_int}"),
         at_sender=True,
     )
 
@@ -76,11 +76,11 @@ async def handle_list(bot: Bot, event: GroupMessageEvent):
 
     if not targets:
         await list_cmd.finish(
-            Message("📭 本群暂无监测目标"),
+            Message("\nSensei，目前暂无监测目标。"),
             at_sender=True,
         )
 
-    lines = ["📋 本群监测列表："]
+    lines = ["\nSensei，以下是正在监测的目标。"]
     for idx, t in enumerate(targets, 1):
         name = t.get("target_name") or t["target_id"]
         lines.append(f"  {idx}. [{t['platform']}] {name}")
@@ -126,7 +126,7 @@ async def handle_remove(bot: Bot, event: GroupMessageEvent):
     target = targets[idx - 1]
     remove_target(target["id"])
     await remove_cmd.send(
-        Message(f"✅ 已移除 [{target['platform']}] {target['target_id']}"),
+        Message(f"\nSensei，已移除监测目标。[{target['platform']}] {target['target_id']}"),
         at_sender=True,
     )
 
@@ -141,12 +141,15 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
     group_targets = [t for t in all_targets if t["group_id"] == event.group_id]
 
     lines = [
-        "🤖 QQ_Monitor_Bot 运行状态",
-        f"  ├ 运行平台: Windows",
-        f"  ├ 总监测目标: {len(all_targets)} 个",
-        f"  ├ 本群目标: {len(group_targets)} 个",
-        f"  ├ 轮询间隔: {config.poll_interval} 秒",
-        f"  └ 数据源: B站动态/B站直播/斗鱼直播",
+        "\nSensei，以下是监测系统状态。",
+        "",
+        f"  运行平台: Windows",
+        f"  总监测目标: {len(all_targets)} 个",
+        f"  本群目标: {len(group_targets)} 个",
+        f"  轮询间隔: {config.poll_interval} 秒",
+        "",
+        "えっ？私がちゃんといるのか確認するのが仕事？\n心配しないでください。私が消えることはありません。",
+        "诶？确认我是否好好待着就是你的工作内容吗？\n别担心。我是不会消失的。",
     ]
     await status_cmd.finish(
         Message("\n".join(lines)),
@@ -158,16 +161,15 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
 async def handle_help(bot: Bot, event: GroupMessageEvent):
     """显示帮助信息"""
     lines = [
-        "🤖 QQ_Monitor_Bot 指令",
+        "\n何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。",
         "",
-        "  help                        显示本帮助",
-        "  status                      机器人运行状态",
-        "  list                        本群监测列表",
-        "  remove <序号>                移除监测目标",
-        "",
-        "  add bilibili_live <房间号>     添加 B站 直播监测",
-        "  add bilibili_dynamic <UID>   添加 B站 动态监测",
-        "  add douyu_live <房间号>       添加 斗鱼 直播监测",
+        "  help  -  显示帮助信息",
+        "  status  -  显示系统运行状态",
+        "  list  -  显示本群监测列表",
+        "  remove <序号>  -  移除监测目标",
+        "  add bilibili_live <房间号>  -  添加B站直播监测",
+        "  add bilibili_dynamic <UID>  -  添加B站动态监测",
+        "  add douyu_live <房间号>  -  添加斗鱼直播监测",
     ]
     await help_cmd.finish(
         Message("\n".join(lines)),
