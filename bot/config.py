@@ -40,9 +40,8 @@ config = Config()
 DB_PATH = DATA_DIR / config.db_path
 
 
-@lru_cache(1)
-def get_version() -> str:
-    """从 pyproject.toml 读取版本号（只读一次，缓存结果）"""
+def _read_version() -> str:
+    """启动时从 pyproject.toml 读取版本号"""
     toml_path = Path(__file__).resolve().parent / "pyproject.toml"
     try:
         with open(toml_path, "rb") as f:
@@ -50,3 +49,7 @@ def get_version() -> str:
         return data.get("project", {}).get("version", "0.0.0")
     except Exception:
         return "0.0.0"
+
+
+# 启动时锁定版本号，运行时永不变化
+VERSION = _read_version()

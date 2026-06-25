@@ -4,7 +4,7 @@ from nonebot import on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 from nonebot.rule import to_me, startswith
 
-from config import config, get_version
+from config import config, VERSION
 from ..monitor.database import add_target, remove_target, list_targets
 from ..monitor.scheduler import reload_targets
 
@@ -145,7 +145,7 @@ async def handle_status(event: GroupMessageEvent):
     lines = [
         "\nSensei，以下是监测系统状态。",
         "",
-        f"  系统内核: v{get_version()}",
+        f"  系统内核: v{VERSION}",
         f"  总监测目标: {len(all_targets)} 个",
         f"  本群目标: {len(group_targets)} 个",
         f"  轮询间隔: {config.poll_interval} 秒",
