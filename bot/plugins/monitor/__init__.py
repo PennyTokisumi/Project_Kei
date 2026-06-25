@@ -36,13 +36,7 @@ async def _on_connect(bot: Bot):
         return
     _greeting_sent = True
 
-    # 检查问候开关（默认开启）
-    if get_setting("greeting", "1") != "1":
-        nb_logger.info("启动问候已关闭，跳过")
-        tray.set_ready()
-        return
-
-    nb_logger.info("WebSocket 已连接，发送上线通知...")
+    nb_logger.info("WebSocket 已连接，检查问候设置...")
     all_targets = list_targets()
     group_ids = {t["group_id"] for t in all_targets}
 
@@ -50,6 +44,8 @@ async def _on_connect(bot: Bot):
         nb_logger.info("暂无监测目标，跳过上线通知")
     else:
         for gid in group_ids:
+            if get_setting(f"greeting_{gid}", "1") != "1":
+                continue
             try:
                 await bot.send_group_msg(
                     group_id=gid,

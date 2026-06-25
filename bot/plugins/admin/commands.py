@@ -174,14 +174,15 @@ async def handle_hello(event: GroupMessageEvent):
             at_sender=True,
         )
     arg = parts[1].upper()
+    key = f"greeting_{event.group_id}"
     if arg == "ON":
-        set_setting("greeting", "1")
+        set_setting(key, "1")
         await hello_cmd.finish(
             Message("\nSensei，监测系统启动确认已开启。"),
             at_sender=True,
         )
     elif arg == "OFF":
-        set_setting("greeting", "0")
+        set_setting(key, "0")
         await hello_cmd.finish(
             Message("\nSensei，监测系统启动确认已关闭。"),
             at_sender=True,
