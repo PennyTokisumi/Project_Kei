@@ -126,11 +126,9 @@ class BilibiliDynamic(SourceBase):
                 item_link = f"https://www.bilibili.com/video/{bvid}"
             elif aid:
                 item_link = f"https://www.bilibili.com/video/av{aid}"
-            desc_text = archive.get("desc", "") or desc.get("text", "")
-            if desc_text:
-                desc_text = re.sub(r'<[^>]+>', '', desc_text).strip()
             extra["is_video"] = True
-            extra["video_desc"] = desc_text
+            extra["video_title"] = archive.get("title", "")  # 视频标题
+            extra["video_desc"] = re.sub(r'<[^>]+>', '', archive.get("desc", "")).strip()  # 视频简介
 
         return Item(
             id=dyn_id,
