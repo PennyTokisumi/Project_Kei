@@ -23,12 +23,8 @@ def build_live_message(item: Item) -> Message:
     parts = [
         f"标题：{item.title}",
         f"主播：{item.nickname}",
+        f"链接：{item.link}",
     ]
-    # 游戏/分区（斗鱼 game_name / B站 area_name）
-    category = item.extra.get("game_name") or item.extra.get("area_name", "")
-    if category:
-        parts.append(f"分类：{category}")
-    parts.append(f"链接：{item.link}")
 
     segs.append(MessageSegment.text("\n".join(parts)))
     return segs

@@ -87,10 +87,11 @@ class TestLiveMessage:
         )
         msg = build_live_message(item)
         text = msg.extract_plain_text()
-        assert "分类：英雄联盟" in text
+        assert "LOL排位" in text
+        assert "分类" not in text
 
     def test_live_message_with_area(self):
-        """B站直播带分区"""
+        """B站直播带分区（但不再显示分类）"""
         from plugins.monitor.formatter import build_live_message
 
         item = Item(
@@ -106,7 +107,8 @@ class TestLiveMessage:
         )
         msg = build_live_message(item)
         text = msg.extract_plain_text()
-        assert "分类：娱乐" in text
+        assert "歌回" in text
+        assert "分类" not in text
 
     def test_live_message_no_category(self):
         """没有分类信息时不出分类行"""
