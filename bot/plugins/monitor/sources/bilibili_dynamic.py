@@ -219,29 +219,33 @@ class BilibiliDynamic(SourceBase):
             orig_opus = orig_major.get("opus") or {}
             orig_type = orig.get("type", "")
 
-            # ── 文字 ──
-            if orig_opus:
-                parts = []
-                t = orig_opus.get("title", "")
-                s = (orig_opus.get("summary") or {}).get("text", "")
-                if t:
-                    parts.append(t)
-                if s and s != t:
-                    parts.append(s)
-                text = "\n".join(parts)
+            # ── 文字（专栏只取标题，其他类型取全文）──
+            if orig_type == "DYNAMIC_TYPE_ARTICLE":
+                art_title = orig_opus.get("title", "") or orig_desc.get("text", "")
+                text = f"{orig_nick}：{art_title}" if orig_nick else art_title
             else:
-                text = orig_desc.get("text", "")
-            text = re.sub(r'<[^>]+>', '', text).strip()
+                if orig_opus:
+                    parts = []
+                    t = orig_opus.get("title", "")
+                    s = (orig_opus.get("summary") or {}).get("text", "")
+                    if t:
+                        parts.append(t)
+                    if s and s != t:
+                        parts.append(s)
+                    text = "\n".join(parts)
+                else:
+                    text = orig_desc.get("text", "")
+                text = re.sub(r'<[^>]+>', '', text).strip()
 
-            # 视频转发：加视频标题
-            if orig_type == "DYNAMIC_TYPE_AV":
-                archive = orig_major.get("archive") or {}
-                vid_title = archive.get("title", "")
-                if vid_title:
-                    text = f"[视频] {vid_title}\n{text}" if text else f"[视频] {vid_title}"
+                # 视频转发：加视频标题
+                if orig_type == "DYNAMIC_TYPE_AV":
+                    archive = orig_major.get("archive") or {}
+                    vid_title = archive.get("title", "")
+                    if vid_title:
+                        text = f"[视频] {vid_title}\n{text}" if text else f"[视频] {vid_title}"
 
-            if orig_nick:
-                text = f"@{orig_nick}：\n{text}" if text else f"@{orig_nick}"
+                if orig_nick:
+                    text = f"@{orig_nick}：\n{text}" if text else f"@{orig_nick}"
 
             # ── 图片 ──
             urls: list[str] = []
