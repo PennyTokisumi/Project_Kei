@@ -121,7 +121,7 @@ class BilibiliDynamic(SourceBase):
         # ── 图片：OPUS 用 pics，旧版用 draw ──
         cover_url, cover_urls = self._extract_images(opus, major, dyn_type)
 
-        # ── 视频投稿：提取 AV/BV 信息 ──
+        # ── 视频/专栏：提取专属信息 ──
         extra = {}
         item_link = f"https://t.bilibili.com/{dyn_id}"
         if dyn_type == "DYNAMIC_TYPE_AV":
@@ -133,8 +133,13 @@ class BilibiliDynamic(SourceBase):
             elif aid:
                 item_link = f"https://www.bilibili.com/video/av{aid}"
             extra["is_video"] = True
-            extra["video_title"] = archive.get("title", "")  # 视频标题
-            extra["video_desc"] = re.sub(r'<[^>]+>', '', archive.get("desc", "")).strip()  # 视频简介
+            extra["video_title"] = archive.get("title", "")
+            extra["video_desc"] = re.sub(r'<[^>]+>', '', archive.get("desc", "")).strip()
+        elif dyn_type == "DYNAMIC_TYPE_ARTICLE":
+            extra["is_article"] = True
+            extra["article_title"] = opus_title or title
+            # 专栏只推标题和封面，不推正文
+            clean_content = ""
 
         return Item(
             id=dyn_id,

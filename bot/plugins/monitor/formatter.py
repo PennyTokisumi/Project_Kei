@@ -58,6 +58,16 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
             content_parts.append(MessageSegment.text(f"\n简介：{video_desc}"))
             # 链接
             content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
+        elif item.extra.get("is_article"):
+            # 专栏投稿专用格式
+            content_parts.append(MessageSegment.text(f"{item.nickname}投稿了文章\n"))
+            if item.cover_url:
+                content_parts.append(MessageSegment.image(item.cover_url))
+            art_title = item.extra.get("article_title", "") or item.title
+            content_parts.append(MessageSegment.text(f"\n标题：{art_title}"))
+            if item.nickname:
+                content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
+            content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
         else:
             # 图文/文字/转发格式
             if item.content:
