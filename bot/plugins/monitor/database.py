@@ -89,12 +89,34 @@ def add_target(group_id: int, platform: str, target_id: str,
 
 
 def remove_target(target_id: int) -> bool:
-    """软删除（设置 enabled=0）"""
+    """软删除（设置 enabled=0），若所有群都已移除则清空去重记录"""
     conn = get_conn()
-    cur = conn.execute(
-        "UPDATE monitor_targets SET enabled=0 WHERE id=?", (target_id,))
+    # 获取要删除的目标信息
+    row = conn.execute(
+        "SELECT platform, target_id FROM monitor_targets WHERE id=?", (target_id,)
+    ).fetchone()
+    if not row:
+        return False
+
+    # 软删除
+    conn.execute("UPDATE monitor_targets SET enabled=0 WHERE id=?", (target_id,))
     conn.commit()
-    return cur.rowcount > 0
+
+    # 检查是否还有其他群仍在监测此目标
+    remaining = conn.execute(
+        "SELECT 1 FROM monitor_targets WHERE platform=? AND target_id=? AND enabled=1 LIMIT 1",
+        (row["platform"], row["target_id"]),
+    ).fetchone()
+
+    if not remaining:
+        # 所有群都移除了，清空去重记录以便后续重新添加时正常推送
+        conn.execute(
+            "DELETE FROM pushed_items WHERE platform=? AND target_id=?",
+            (row["platform"], row["target_id"]),
+        )
+        conn.commit()
+
+    return True
 
 
 def list_targets(group_id: Optional[int] = None) -> list[dict]:
