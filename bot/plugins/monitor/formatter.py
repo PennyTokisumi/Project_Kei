@@ -44,21 +44,35 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
     for item in items:
         content_parts = []
 
-        # 动态正文
-        if item.content:
-            content_parts.append(MessageSegment.text(item.content + "\n"))
-
-        # 图片（优先多图，否则单图）
-        if item.cover_urls:
-            for url in item.cover_urls:
-                content_parts.append(MessageSegment.image(url))
-        elif item.cover_url:
-            content_parts.append(MessageSegment.image(item.cover_url))
-
-        # 来源 + 原文链接
-        if item.nickname:
-            content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
-        content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
+        if item.extra.get("is_video"):
+            # 视频投稿专用格式
+            lines = [f"{item.nickname}投稿了视频"]
+            if item.title:
+                lines.append(f"标题：{item.title}")
+            content_parts.append(MessageSegment.text("\n".join(lines) + "\n"))
+            # 封面图
+            if item.cover_url:
+                content_parts.append(MessageSegment.image(item.cover_url))
+            # 简介
+            video_desc = item.extra.get("video_desc", "")
+            desc_line = f"\n简介：{video_desc}" if video_desc else "\n简介："
+            content_parts.append(MessageSegment.text(desc_line))
+            # 来源 + 链接
+            if item.nickname:
+                content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
+            content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
+        else:
+            # 图文/文字/转发格式
+            if item.content:
+                content_parts.append(MessageSegment.text(item.content + "\n"))
+            if item.cover_urls:
+                for url in item.cover_urls:
+                    content_parts.append(MessageSegment.image(url))
+            elif item.cover_url:
+                content_parts.append(MessageSegment.image(item.cover_url))
+            if item.nickname:
+                content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
+            content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
 
         node = {
             "type": "node",

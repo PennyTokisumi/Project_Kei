@@ -115,6 +115,23 @@ class BilibiliDynamic(SourceBase):
         # ── 图片：OPUS 用 pics，旧版用 draw ──
         cover_url, cover_urls = self._extract_images(opus, major, dyn_type)
 
+        # ── 视频投稿：提取 AV/BV 信息 ──
+        extra = {}
+        item_link = f"https://t.bilibili.com/{dyn_id}"
+        if dyn_type == "DYNAMIC_TYPE_AV":
+            archive = major.get("archive") or {}
+            bvid = archive.get("bvid", "")
+            aid = archive.get("aid", "")
+            if bvid:
+                item_link = f"https://www.bilibili.com/video/{bvid}"
+            elif aid:
+                item_link = f"https://www.bilibili.com/video/av{aid}"
+            desc_text = archive.get("desc", "") or desc.get("text", "")
+            if desc_text:
+                desc_text = re.sub(r'<[^>]+>', '', desc_text).strip()
+            extra["is_video"] = True
+            extra["video_desc"] = desc_text
+
         return Item(
             id=dyn_id,
             platform=self.platform,
@@ -123,10 +140,11 @@ class BilibiliDynamic(SourceBase):
             title=title,
             nickname=nickname,
             content=clean_content,
-            link=f"https://t.bilibili.com/{dyn_id}",
+            link=item_link,
             cover_url=cover_url,
             cover_urls=cover_urls,
             pub_ts=pub_ts,
+            extra=extra,
         )
 
     # ─── 图片提取 ─────────────────────────────────────────
