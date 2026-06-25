@@ -53,7 +53,26 @@ def init_db():
             checked_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (room_id, platform)
         );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     """)
+    conn.commit()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    """读取设置项"""
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str):
+    """写入设置项"""
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
 
 

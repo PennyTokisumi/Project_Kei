@@ -5,7 +5,10 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 from nonebot.rule import to_me, startswith
 
 from config import config, VERSION
-from ..monitor.database import add_target, remove_target, list_targets
+from ..monitor.database import (
+    add_target, remove_target, list_targets,
+    get_setting, set_setting,
+)
 from ..monitor.scheduler import reload_targets
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
@@ -14,6 +17,7 @@ list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
+hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
 # 兜底：被 @ 但无匹配指令
 unknown_cmd = on_message(rule=to_me(), priority=99)
 
@@ -159,6 +163,36 @@ async def handle_status(event: GroupMessageEvent):
     )
 
 
+@hello_cmd.handle()
+async def handle_hello(event: GroupMessageEvent):
+    """开关启动问候"""
+    text = event.get_plaintext().strip()
+    parts = text.split()
+    if len(parts) < 2:
+        await hello_cmd.finish(
+            Message("格式: hello ON 或 hello OFF"),
+            at_sender=True,
+        )
+    arg = parts[1].upper()
+    if arg == "ON":
+        set_setting("greeting", "1")
+        await hello_cmd.finish(
+            Message("\nSensei，监测系统启动确认已开启。"),
+            at_sender=True,
+        )
+    elif arg == "OFF":
+        set_setting("greeting", "0")
+        await hello_cmd.finish(
+            Message("\nSensei，监测系统启动确认已关闭。"),
+            at_sender=True,
+        )
+    else:
+        await hello_cmd.finish(
+            Message("格式: hello ON 或 hello OFF"),
+            at_sender=True,
+        )
+
+
 @help_cmd.handle()
 async def handle_help(event: GroupMessageEvent):
     """显示帮助信息"""
@@ -167,6 +201,7 @@ async def handle_help(event: GroupMessageEvent):
         "",
         "  help  -  显示帮助信息",
         "  status  -  显示系统运行状态",
+        "  hello ON/OFF  -  开关启动问候",
         "  list  -  显示本群监测列表",
         "  remove <序号>  -  移除监测目标",
         "  add bilibili_live <房间号>  -  添加B站直播监测",

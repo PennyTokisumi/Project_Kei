@@ -3,7 +3,7 @@
 from nonebot import get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 
-from .database import list_targets
+from .database import get_setting, list_targets
 from .scheduler import start, stop
 from tray import tray, update_status
 
@@ -35,6 +35,12 @@ async def _on_connect(bot: Bot):
     if _greeting_sent:
         return
     _greeting_sent = True
+
+    # 检查问候开关（默认开启）
+    if get_setting("greeting", "1") != "1":
+        nb_logger.info("启动问候已关闭，跳过")
+        tray.set_ready()
+        return
 
     nb_logger.info("WebSocket 已连接，发送上线通知...")
     all_targets = list_targets()
