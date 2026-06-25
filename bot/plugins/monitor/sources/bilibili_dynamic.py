@@ -1,4 +1,4 @@
-"""B站动态监测 - 直连 B站 API（仅原创动态 & 视频投稿）"""
+"""B站动态监测 - 直连 B站 API（全类型推送）"""
 
 import re
 from typing import Optional
@@ -34,12 +34,14 @@ def _make_headers() -> dict:
 
 
 class BilibiliDynamic(SourceBase):
-    """B站动态监测源 — 仅推送原创内容"""
+    """B站动态监测源 — 全类型推送"""
 
     _WANTED_TYPES = frozenset({
-        "DYNAMIC_TYPE_DRAW",   # 图文 / 纯文字（OPUS）
-        "DYNAMIC_TYPE_WORD",   # 纯文字（旧版）
-        "DYNAMIC_TYPE_AV",     # 视频投稿
+        "DYNAMIC_TYPE_DRAW",     # 图文 / 纯文字（OPUS）
+        "DYNAMIC_TYPE_WORD",     # 纯文字（旧版）
+        "DYNAMIC_TYPE_AV",       # 视频投稿
+        "DYNAMIC_TYPE_ARTICLE",  # 文章 / 专栏
+        "DYNAMIC_TYPE_FORWARD",  # 转发动态
     })
 
     @property
@@ -107,6 +109,13 @@ class BilibiliDynamic(SourceBase):
 
         clean_content = re.sub(r'<[^>]+>', '', raw_text).strip()
 
+        # 转发动态：提取原文信息
+        if dyn_type == "DYNAMIC_TYPE_FORWARD":
+            forward_text = self._extract_forward_text(dyn)
+            if forward_text:
+                prefix = f"//@{nickname}:\n{clean_content}\n" if clean_content else ""
+                clean_content = f"{prefix}----------\n{forward_text}"
+
         # 标题取前 50 字
         title = clean_content[:50] if clean_content else f"{nickname}的动态"
 
@@ -151,7 +160,39 @@ class BilibiliDynamic(SourceBase):
             cover = archive.get("cover")
             return cover, [cover] if cover else []
 
+        # major.article（文章/专栏）
+        if major_type in ("MAJOR_TYPE_ARTICLE", "DYNAMIC_TYPE_ARTICLE"):
+            article = major.get("article") or {}
+            covers = article.get("covers") or []
+            urls = [c for c in covers if c]
+            return (urls[0] if urls else None), urls
+
         return None, []
+
+    # ─── 转发原文提取 ──────────────────────────────────────
+
+    @staticmethod
+    def _extract_forward_text(dyn: dict) -> str:
+        """提取转发动态的原文内容"""
+        try:
+            orig = dyn.get("orig")
+            if not orig:
+                return ""
+            orig_modules = orig.get("modules", {})
+            orig_author = orig_modules.get("module_author", {})
+            orig_nick = orig_author.get("name", "")
+            orig_md = orig_modules.get("module_dynamic", {})
+            orig_desc = orig_md.get("desc") or {}
+            orig_opus = (orig_md.get("major") or {}).get("opus") or {}
+
+            # 优先 OPUS，其次 desc
+            text = orig_opus.get("title", "") or orig_desc.get("text", "")
+            text = re.sub(r'<[^>]+>', '', text).strip()
+            if orig_nick:
+                text = f"@{orig_nick}：{text}" if text else f"@{orig_nick}"
+            return text[:500]
+        except Exception:
+            return ""
 
     # ─── 用户昵称 ─────────────────────────────────────────
 
