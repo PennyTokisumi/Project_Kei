@@ -1,6 +1,9 @@
 """应用配置 - 基于 Pydantic 从环境变量加载"""
 
+import tomllib
 from pathlib import Path
+from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -35,3 +38,15 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 config = Config()
 DB_PATH = DATA_DIR / config.db_path
+
+
+@lru_cache(1)
+def get_version() -> str:
+    """从 pyproject.toml 读取版本号（只读一次，缓存结果）"""
+    toml_path = Path(__file__).resolve().parent / "pyproject.toml"
+    try:
+        with open(toml_path, "rb") as f:
+            data = tomllib.load(f)
+        return data.get("project", {}).get("version", "0.0.0")
+    except Exception:
+        return "0.0.0"
