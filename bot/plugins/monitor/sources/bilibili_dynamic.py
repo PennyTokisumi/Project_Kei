@@ -43,8 +43,9 @@ class BilibiliDynamic(SourceBase):
     """B站动态监测源 — 仅推送原创内容"""
 
     _WANTED_TYPES = frozenset({
-        "DYNAMIC_TYPE_DRAW",   # 图文 / 纯文字 / 转发（OPUS 统一归类）
-        "DYNAMIC_TYPE_AV",     # 视频投稿
+        "DYNAMIC_TYPE_DRAW",     # 图文 / 纯文字（OPUS）
+        "DYNAMIC_TYPE_AV",       # 视频投稿
+        "DYNAMIC_TYPE_ARTICLE",  # 文章 / 专栏
     })
 
     @property
@@ -174,6 +175,13 @@ class BilibiliDynamic(SourceBase):
             archive = major.get("archive") or {}
             cover = _to_https(archive.get("cover", ""))
             return cover, [cover] if cover else []
+
+        # major.article（文章/专栏）
+        if major_type in ("MAJOR_TYPE_ARTICLE", "DYNAMIC_TYPE_ARTICLE"):
+            article = major.get("article") or {}
+            covers = article.get("covers") or []
+            urls = [_to_https(c) for c in covers if c]
+            return (urls[0] if urls else None), urls
 
         return None, []
 
