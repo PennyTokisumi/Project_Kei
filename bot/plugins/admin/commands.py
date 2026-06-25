@@ -8,6 +8,8 @@ from config import config
 from ..monitor.database import add_target, remove_target, list_targets
 from ..monitor.scheduler import reload_targets
 
+VERSION = "1.5"  # 当前运行版本，升级后同步更新
+
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
 list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
@@ -145,7 +147,7 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
     lines = [
         "\nSensei，以下是监测系统状态。",
         "",
-        f"  运行平台: Windows",
+        f"  系统内核: v{VERSION}",
         f"  总监测目标: {len(all_targets)} 个",
         f"  本群目标: {len(group_targets)} 个",
         f"  轮询间隔: {config.poll_interval} 秒",
