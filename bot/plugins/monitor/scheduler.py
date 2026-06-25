@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from nonebot import get_bot, logger as nb_logger
 
 from config import config
-from .database import cleanup_old_pushed, has_pushed_items, init_db, list_targets
+from .database import cleanup_old_pushed, init_db, list_targets
 from .dedup import dedup
 from .formatter import send_live_notification, send_dynamic_forward
 from .sources.base import SourceBase
@@ -17,6 +17,9 @@ from .sources.douyu_live import DouyuLive
 from tray import update_status
 
 scheduler = AsyncIOScheduler()
+
+# 启动后已静默同步过的目标（避免重启后推送旧动态）
+_synced_targets: set[tuple[str, str]] = set()
 
 # 工厂映射：platform_source_type → SourceBase 子类
 SOURCE_FACTORY: dict[str, type[SourceBase]] = {
@@ -71,9 +74,11 @@ async def poll_source(source: SourceBase):
     if not new_items:
         return
 
-    # 动态类首次抓取：静默标记历史动态，不推送
+    # 动态类：启动后首次轮询静默标记现有动态，防止推送重启前旧内容
     if not is_live:
-        if not has_pushed_items(source.platform, source.target_id):
+        key = (source.platform, source.target_id)
+        if key not in _synced_targets:
+            _synced_targets.add(key)
             for item in new_items:
                 dedup.mark_pushed(
                     item.platform, item.source_type,
@@ -81,8 +86,7 @@ async def poll_source(source: SourceBase):
                     item.title, item.link,
                 )
             nb_logger.info(
-                f"首次抓取 [{source.platform}/{source.target_id}]"
-                f" 静默标记 {len(new_items)} 条历史动态"
+                f"启动静默标记 [{key}] → {len(new_items)} 条"
             )
             return
 
