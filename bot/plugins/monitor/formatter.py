@@ -46,16 +46,17 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
 
         if item.extra.get("is_video"):
             # 视频投稿专用格式
-            vid_title = item.extra.get("video_title", "") or item.title
             parts = [f"{item.nickname}投稿了视频"]
-            parts.append(f"标题：{vid_title}")
             # 动态正文（如有）
-            if item.content and item.content != vid_title:
+            if item.content:
                 parts.append(item.content)
             content_parts.append(MessageSegment.text("\n".join(parts) + "\n"))
             # 封面图
             if item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
+            # 视频标题
+            vid_title = item.extra.get("video_title", "") or item.title
+            content_parts.append(MessageSegment.text(f"\n标题：{vid_title}"))
             # 简介
             video_desc = item.extra.get("video_desc", "")
             content_parts.append(MessageSegment.text(f"\n简介：{video_desc}"))
