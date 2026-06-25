@@ -43,7 +43,7 @@ DB_PATH = DATA_DIR / config.db_path
 @lru_cache(1)
 def get_version() -> str:
     """从 pyproject.toml 读取版本号（只读一次，缓存结果）"""
-    toml_path = PROJECT_ROOT / "pyproject.toml"
+    toml_path = Path(__file__).resolve().parent / "pyproject.toml"
     try:
         with open(toml_path, "rb") as f:
             data = tomllib.load(f)

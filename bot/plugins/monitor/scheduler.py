@@ -136,6 +136,25 @@ async def start():
     if cleaned:
         nb_logger.info(f"清理了 {cleaned} 条过期推送记录")
 
+    # 启动时静默同步所有目标的现有动态，避免推送历史内容
+    targets = list_targets()
+    if targets:
+        nb_logger.info("启动静默同步，标记现有动态...")
+        for t in targets:
+            source = _make_source(t)
+            if source and source.source_type != "live":
+                try:
+                    items = await source.fetch()
+                    for item in items:
+                        dedup.mark_pushed(
+                            item.platform, item.source_type,
+                            item.target_id, item.id,
+                            item.title, item.link,
+                        )
+                except Exception:
+                    pass
+        nb_logger.info(f"静默同步完成，共 {len(targets)} 个目标")
+
     # 防止重复 start
     if scheduler.running:
         nb_logger.warning("调度器已在运行，跳过")
