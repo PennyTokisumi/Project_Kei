@@ -237,12 +237,11 @@ class BilibiliDynamic(SourceBase):
                     text = orig_desc.get("text", "")
                 text = re.sub(r'<[^>]+>', '', text).strip()
 
-                # 视频转发：加视频标题
+                # 视频转发：只取标题（参照专栏格式）
                 if orig_type == "DYNAMIC_TYPE_AV":
                     archive = orig_major.get("archive") or {}
                     vid_title = archive.get("title", "")
-                    if vid_title:
-                        text = f"[视频] {vid_title}\n{text}" if text else f"[视频] {vid_title}"
+                    text = vid_title or text
 
                 if orig_nick:
                     text = f"{orig_nick}：\n{text}" if text else orig_nick
