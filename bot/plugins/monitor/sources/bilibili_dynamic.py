@@ -126,7 +126,7 @@ class BilibiliDynamic(SourceBase):
         if dyn_type == "DYNAMIC_TYPE_FORWARD":
             fwd_text, fwd_urls = self._extract_forward_full(dyn)
             if fwd_text or fwd_urls:
-                prefix = f"{nickname}：\n{clean_content}\n" if clean_content else ""
+                prefix = f"{nickname}：{clean_content}\n" if clean_content else ""
                 clean_content = f"{prefix}----------\n{fwd_text}" if fwd_text else prefix.rstrip()
                 cover_urls = cover_urls + fwd_urls
                 if not cover_url and fwd_urls:
