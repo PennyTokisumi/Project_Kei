@@ -14,6 +14,8 @@ list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
+# 兜底：被 @ 但无匹配指令
+unknown_cmd = on_message(rule=to_me(), priority=99)
 
 
 @add_cmd.handle()
@@ -101,7 +103,7 @@ async def handle_remove(bot: Bot, event: GroupMessageEvent):
     # 权限校验：仅群主或管理员可用
     if event.sender.role not in ("owner", "admin"):
         await remove_cmd.finish(
-            Message("正因如此，你没有资格啊。"),
+            Message("\n正因如此，你没有资格啊。"),
             at_sender=True,
         )
 
@@ -161,7 +163,7 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
 async def handle_help(bot: Bot, event: GroupMessageEvent):
     """显示帮助信息"""
     lines = [
-        "\n何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。",
+        "\nSensei，有什么需要Kei帮忙的吗？",
         "",
         "  help  -  显示帮助信息",
         "  status  -  显示系统运行状态",
@@ -173,5 +175,14 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
     ]
     await help_cmd.finish(
         Message("\n".join(lines)),
+        at_sender=True,
+    )
+
+
+@unknown_cmd.handle()
+async def handle_unknown(bot: Bot, event: GroupMessageEvent):
+    """兜底：被 @ 但无匹配指令"""
+    await unknown_cmd.finish(
+        Message("\n何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。"),
         at_sender=True,
     )
