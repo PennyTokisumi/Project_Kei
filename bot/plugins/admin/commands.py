@@ -1,7 +1,7 @@
 """群管理命令 - add / list / remove / status"""
 
 from nonebot import on_message
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Bot, Message
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 from nonebot.rule import to_me, startswith
 
 from config import config, get_version
@@ -19,7 +19,7 @@ unknown_cmd = on_message(rule=to_me(), priority=99)
 
 
 @add_cmd.handle()
-async def handle_add(bot: Bot, event: GroupMessageEvent):
+async def handle_add(event: GroupMessageEvent):
     """添加监测目标
 
     格式: add <platform> <target_id>
@@ -71,7 +71,7 @@ async def handle_add(bot: Bot, event: GroupMessageEvent):
 
 
 @list_cmd.handle()
-async def handle_list(bot: Bot, event: GroupMessageEvent):
+async def handle_list(event: GroupMessageEvent):
     """列出本群所有监测目标"""
     group_id = event.group_id
     targets = [t for t in list_targets() if t["group_id"] == group_id]
@@ -94,7 +94,7 @@ async def handle_list(bot: Bot, event: GroupMessageEvent):
 
 
 @remove_cmd.handle()
-async def handle_remove(bot: Bot, event: GroupMessageEvent):
+async def handle_remove(event: GroupMessageEvent):
     """移除监测目标（仅群主/管理员可用）
 
     格式: remove <id>
@@ -137,7 +137,7 @@ async def handle_remove(bot: Bot, event: GroupMessageEvent):
 
 
 @status_cmd.handle()
-async def handle_status(bot: Bot, event: GroupMessageEvent):
+async def handle_status(event: GroupMessageEvent):
     """查看机器人运行状态"""
     all_targets = list_targets()
     group_targets = [t for t in all_targets if t["group_id"] == event.group_id]
@@ -160,7 +160,7 @@ async def handle_status(bot: Bot, event: GroupMessageEvent):
 
 
 @help_cmd.handle()
-async def handle_help(bot: Bot, event: GroupMessageEvent):
+async def handle_help(event: GroupMessageEvent):
     """显示帮助信息"""
     lines = [
         "\nSensei，有什么需要Kei帮忙的吗？",
@@ -180,7 +180,7 @@ async def handle_help(bot: Bot, event: GroupMessageEvent):
 
 
 @unknown_cmd.handle()
-async def handle_unknown(bot: Bot, event: GroupMessageEvent):
+async def handle_unknown(event: GroupMessageEvent):
     """兜底：被 @ 但无匹配指令"""
     await unknown_cmd.finish(
         Message("\n何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。"),

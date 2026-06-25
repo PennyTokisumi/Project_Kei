@@ -107,6 +107,7 @@ class DouyuLive(SourceBase):
         if room.get("room_status") != "1":
             return None
 
+        cover = room.get("room_thumb", "")
         return Item(
             id=f"live_{self.target_id}",
             platform=self.platform,
@@ -116,7 +117,7 @@ class DouyuLive(SourceBase):
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
             link=f"https://www.douyu.com/{self.target_id}",
-            cover_url=room.get("room_thumb"),
+            cover_url=cover if cover.startswith("http") else "",
             extra={
                 "game_name": room.get("game_name", ""),
             },

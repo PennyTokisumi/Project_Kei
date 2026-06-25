@@ -79,8 +79,7 @@ async def send_live_notification(bot: Bot, group_id: int, item: Item):
     await bot.send_group_msg(group_id=group_id, message=msg)
 
 
-async def send_dynamic_forward(bot: Bot, group_id: int,
-                                nickname: str, items: list[Item]):
+async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
     """发送B站动态合并转发（即使只有1条）"""
     if not items:
         return

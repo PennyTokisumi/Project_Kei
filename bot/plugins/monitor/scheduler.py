@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from nonebot import get_bot, logger as nb_logger
 
 from config import config
-from .database import has_pushed_items, init_db, list_targets
+from .database import cleanup_old_pushed, has_pushed_items, init_db, list_targets
 from .dedup import dedup
 from .formatter import send_live_notification, send_dynamic_forward
 from .sources.base import SourceBase
@@ -93,8 +93,7 @@ async def poll_source(source: SourceBase):
                 await send_live_notification(bot, source.group_id, item)
             nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
         else:
-            nickname = new_items[0].nickname or source.target_id
-            await send_dynamic_forward(bot, source.group_id, nickname, new_items)
+            await send_dynamic_forward(bot, source.group_id, new_items)
             nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
     except Exception as e:
         nb_logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
@@ -133,7 +132,6 @@ async def start():
     init_db()
 
     # 清理 30 天前的推送记录，防止 DB 无限膨胀
-    from .database import cleanup_old_pushed
     cleaned = cleanup_old_pushed(days=30)
     if cleaned:
         nb_logger.info(f"清理了 {cleaned} 条过期推送记录")
