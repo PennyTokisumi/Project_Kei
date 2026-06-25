@@ -16,6 +16,12 @@ BILIBILI_DYNAMIC_API = (
 )
 
 
+def _to_https(url: str) -> str:
+    if url.startswith("http://"):
+        return "https://" + url[7:]
+    return url
+
+
 def _make_headers() -> dict:
     headers = {
         "User-Agent": (
@@ -153,20 +159,20 @@ class BilibiliDynamic(SourceBase):
         # OPUS 格式
         pics = opus.get("pics") or []
         if pics:
-            urls = [p.get("url", "") for p in pics if p.get("url")]
+            urls = [_to_https(p.get("url", "")) for p in pics if p.get("url")]
             return (urls[0] if urls else None), urls
 
         # major.draw（新旧通用）
         major_type = major.get("type", "") or dyn_type
         if major_type in ("MAJOR_TYPE_DRAW", "DYNAMIC_TYPE_DRAW"):
             items_list = (major.get("draw") or {}).get("items", [])
-            urls = [d.get("src") for d in items_list if d.get("src")]
+            urls = [_to_https(d.get("src", "")) for d in items_list if d.get("src")]
             return (urls[0] if urls else None), urls
 
         # major.archive（视频）
         if major_type in ("MAJOR_TYPE_ARCHIVE", "DYNAMIC_TYPE_AV"):
             archive = major.get("archive") or {}
-            cover = archive.get("cover")
+            cover = _to_https(archive.get("cover", ""))
             return cover, [cover] if cover else []
 
         return None, []
