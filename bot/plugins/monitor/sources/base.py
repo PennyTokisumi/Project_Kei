@@ -18,6 +18,7 @@ class Item:
     link: str                # 跳转链接
     cover_url: Optional[str] = None  # 封面图 URL（首张，保留兼容）
     cover_urls: list[str] = field(default_factory=list)  # 全部图片 URL
+    pub_ts: float = 0.0  # 发布时间戳（Unix timestamp，0 表示未知）
     extra: dict = field(default_factory=dict)  # 平台特有扩展信息
 
 

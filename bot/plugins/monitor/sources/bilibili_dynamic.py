@@ -87,6 +87,8 @@ class BilibiliDynamic(SourceBase):
 
         dyn_id = dyn.get("id_str", str(dyn.get("id", "")))
         nickname = author.get("name", "")
+        # 发布时间戳（用于过滤重启前的旧动态）
+        pub_ts = float(author.get("pub_ts", 0))
 
         # ── 文字：优先 OPUS，其次 desc ──
         opus = major.get("opus") or {}
@@ -124,6 +126,7 @@ class BilibiliDynamic(SourceBase):
             link=f"https://t.bilibili.com/{dyn_id}",
             cover_url=cover_url,
             cover_urls=cover_urls,
+            pub_ts=pub_ts,
         )
 
     # ─── 图片提取 ─────────────────────────────────────────

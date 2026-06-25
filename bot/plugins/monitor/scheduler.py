@@ -16,9 +16,14 @@ from .sources.bilibili_live import BilibiliLive
 from .sources.douyu_live import DouyuLive
 from tray import update_status
 
+import time as _time_module
+
 scheduler = AsyncIOScheduler()
 
-# 启动后已静默同步过的目标（避免重启后推送旧动态）
+# 启动时间戳（用于过滤重启前的旧动态）
+_startup_ts = _time_module.time()
+
+# 启动后已静默同步过的目标
 _synced_targets: set[tuple[str, str]] = set()
 
 # 工厂映射：platform_source_type → SourceBase 子类
@@ -74,21 +79,29 @@ async def poll_source(source: SourceBase):
     if not new_items:
         return
 
-    # 动态类：启动后首次轮询静默标记现有动态，防止推送重启前旧内容
+    # 动态类：启动后首次轮询，跳过重启前发布的旧动态
     if not is_live:
         key = (source.platform, source.target_id)
         if key not in _synced_targets:
             _synced_targets.add(key)
+            truly_new = []
             for item in new_items:
-                dedup.mark_pushed(
-                    item.platform, item.source_type,
-                    item.target_id, item.id,
-                    item.title, item.link,
-                )
-            nb_logger.info(
-                f"启动静默标记 [{key}] → {len(new_items)} 条"
-            )
-            return
+                if item.pub_ts > _startup_ts:
+                    # 启动后发布 → 正常推送
+                    truly_new.append(item)
+                else:
+                    # 启动前发布 → 静默标记
+                    dedup.mark_pushed(
+                        item.platform, item.source_type,
+                        item.target_id, item.id,
+                        item.title, item.link,
+                    )
+            skipped = len(new_items) - len(truly_new)
+            if skipped:
+                nb_logger.info(f"启动静默标记 [{key}] → 跳过 {skipped} 条旧动态")
+            new_items = truly_new
+            if not new_items:
+                return
 
     # 推送（成功后再标记已推送，防止推送失败丢失内容）
     try:
