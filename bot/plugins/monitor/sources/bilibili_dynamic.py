@@ -222,7 +222,7 @@ class BilibiliDynamic(SourceBase):
             # ── 文字（专栏只取标题，其他类型取全文）──
             if orig_type == "DYNAMIC_TYPE_ARTICLE":
                 art_title = orig_opus.get("title", "") or orig_desc.get("text", "")
-                text = f"{orig_nick}：{art_title}" if orig_nick else art_title
+                text = f"{orig_nick}：{art_title}" if orig_nick else art_title  # 已无@前缀
             else:
                 if orig_opus:
                     parts = []
@@ -245,7 +245,7 @@ class BilibiliDynamic(SourceBase):
                         text = f"[视频] {vid_title}\n{text}" if text else f"[视频] {vid_title}"
 
                 if orig_nick:
-                    text = f"@{orig_nick}：\n{text}" if text else f"@{orig_nick}"
+                    text = f"{orig_nick}：\n{text}" if text else orig_nick
 
             # ── 图片 ──
             urls: list[str] = []
