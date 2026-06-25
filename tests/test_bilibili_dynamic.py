@@ -44,11 +44,12 @@ class TestDynamicParsing:
         assert item.cover_url == "https://i0.hdslb.com/bfs/archive/video_cover.jpg"
         assert len(item.cover_urls) == 1
 
-    def test_parse_forward_filtered(self, sample_dynamic_forward):
-        """转发动态应被过滤"""
+    def test_parse_forward_accepted(self, sample_dynamic_forward):
+        """转发动态现在也被推送"""
         source = BilibiliDynamic("999", 123456)
         item = source._parse_dynamic(sample_dynamic_forward)
-        assert item is None
+        assert item is not None
+        assert "转发一下" in item.content
 
     def test_parse_word_deprecated(self, sample_dynamic_word):
         """WORD 类型已废弃，新版 OPUS 统一为 DRAW"""
@@ -174,7 +175,7 @@ class TestFetchAPI:
 
     @pytest.mark.asyncio
     async def test_fetch_filters_forward(self, httpx_mock):
-        """转发动态应被过滤，只保留原创"""
+        """转发动态现在也推送"""
         url = BILIBILI_DYNAMIC_API.format(uid="436742")
         httpx_mock.add_response(
             url=url,
@@ -202,7 +203,8 @@ class TestFetchAPI:
 
         source = BilibiliDynamic("436742", 123456)
         items = await source.fetch()
-        assert items == []
+        assert len(items) == 1
+        assert items[0].id == "333"
 
 
 class TestGetDisplayName:

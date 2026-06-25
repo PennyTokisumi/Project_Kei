@@ -46,6 +46,7 @@ class BilibiliDynamic(SourceBase):
         "DYNAMIC_TYPE_DRAW",     # 图文 / 纯文字（OPUS）
         "DYNAMIC_TYPE_AV",       # 视频投稿
         "DYNAMIC_TYPE_ARTICLE",  # 文章 / 专栏
+        "DYNAMIC_TYPE_FORWARD",  # 转发动态
     })
 
     @property
@@ -121,6 +122,16 @@ class BilibiliDynamic(SourceBase):
         # ── 图片：OPUS 用 pics，旧版用 draw ──
         cover_url, cover_urls = self._extract_images(opus, major, dyn_type)
 
+        # ── 转发动态：合并原文文字和图片 ──
+        if dyn_type == "DYNAMIC_TYPE_FORWARD":
+            fwd_text, fwd_urls = self._extract_forward_full(dyn)
+            if fwd_text or fwd_urls:
+                prefix = f"//@{nickname}:\n{clean_content}\n" if clean_content else ""
+                clean_content = f"{prefix}----------\n{fwd_text}" if fwd_text else prefix.rstrip()
+                cover_urls = cover_urls + fwd_urls
+                if not cover_url and fwd_urls:
+                    cover_url = fwd_urls[0]
+
         # ── 视频/专栏：提取专属信息 ──
         extra = {}
         item_link = f"https://t.bilibili.com/{dyn_id}"
@@ -189,6 +200,71 @@ class BilibiliDynamic(SourceBase):
             return (urls[0] if urls else None), urls
 
         return None, []
+
+    # ─── 转发原文提取 ──────────────────────────────────────
+
+    @staticmethod
+    def _extract_forward_full(dyn: dict) -> tuple[str, list[str]]:
+        """提取转发动态的原文：返回 (文字, 图片URL列表)"""
+        try:
+            orig = dyn.get("orig")
+            if not orig:
+                return "", []
+            orig_modules = orig.get("modules", {})
+            orig_author = orig_modules.get("module_author", {})
+            orig_nick = orig_author.get("name", "")
+            orig_md = orig_modules.get("module_dynamic", {})
+            orig_desc = orig_md.get("desc") or {}
+            orig_major = orig_md.get("major") or {}
+            orig_opus = orig_major.get("opus") or {}
+            orig_type = orig.get("type", "")
+
+            # ── 文字 ──
+            if orig_opus:
+                parts = []
+                t = orig_opus.get("title", "")
+                s = (orig_opus.get("summary") or {}).get("text", "")
+                if t:
+                    parts.append(t)
+                if s and s != t:
+                    parts.append(s)
+                text = "\n".join(parts)
+            else:
+                text = orig_desc.get("text", "")
+            text = re.sub(r'<[^>]+>', '', text).strip()
+
+            # 视频转发：加视频标题
+            if orig_type == "DYNAMIC_TYPE_AV":
+                archive = orig_major.get("archive") or {}
+                vid_title = archive.get("title", "")
+                if vid_title:
+                    text = f"[视频] {vid_title}\n{text}" if text else f"[视频] {vid_title}"
+
+            if orig_nick:
+                text = f"@{orig_nick}：\n{text}" if text else f"@{orig_nick}"
+
+            # ── 图片 ──
+            urls: list[str] = []
+            pics = orig_opus.get("pics") or []
+            urls.extend(_to_https(p.get("url", "")) for p in pics if p.get("url"))
+            major_type = orig_major.get("type", "") or orig_type
+            if major_type in ("MAJOR_TYPE_DRAW", "DYNAMIC_TYPE_DRAW"):
+                items_list = (orig_major.get("draw") or {}).get("items", [])
+                urls.extend(_to_https(d.get("src", "")) for d in items_list if d.get("src"))
+            if major_type in ("MAJOR_TYPE_ARCHIVE", "DYNAMIC_TYPE_AV"):
+                archive = orig_major.get("archive") or {}
+                cover = _to_https(archive.get("cover", ""))
+                if cover:
+                    urls.append(cover)
+            if major_type in ("MAJOR_TYPE_ARTICLE", "DYNAMIC_TYPE_ARTICLE"):
+                article = orig_major.get("article") or {}
+                for c in (article.get("covers") or []):
+                    if c:
+                        urls.append(_to_https(c))
+
+            return text[:500], urls
+        except Exception:
+            return "", []
 
     # ─── 用户昵称 ─────────────────────────────────────────
 
