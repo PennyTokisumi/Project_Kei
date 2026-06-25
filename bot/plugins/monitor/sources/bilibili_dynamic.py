@@ -37,8 +37,7 @@ class BilibiliDynamic(SourceBase):
     """B站动态监测源 — 仅推送原创内容"""
 
     _WANTED_TYPES = frozenset({
-        "DYNAMIC_TYPE_DRAW",   # 图文 / 纯文字（OPUS）
-        "DYNAMIC_TYPE_WORD",   # 纯文字（旧版）
+        "DYNAMIC_TYPE_DRAW",   # 图文 / 纯文字 / 转发（OPUS 统一归类）
         "DYNAMIC_TYPE_AV",     # 视频投稿
     })
 

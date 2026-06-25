@@ -50,25 +50,22 @@ class TestDynamicParsing:
         item = source._parse_dynamic(sample_dynamic_forward)
         assert item is None
 
-    def test_parse_word(self, sample_dynamic_word):
-        """纯文字动态"""
+    def test_parse_word_deprecated(self, sample_dynamic_word):
+        """WORD 类型已废弃，新版 OPUS 统一为 DRAW"""
         source = BilibiliDynamic("555", 123456)
         item = source._parse_dynamic(sample_dynamic_word)
-
-        assert item is not None
-        assert "今天天气真好" in item.content
-        assert item.cover_url is None
-        assert item.cover_urls == []
+        assert item is None
 
     def test_content_kept_full(self):
         """正文保留完整，不截断"""
         long_text = "测" * 600
         dyn = {
             "id_str": "1",
+            "type": "DYNAMIC_TYPE_DRAW",
             "modules": {
                 "module_author": {"name": "长文"},
                 "module_dynamic": {
-                    "desc": {"type": "DYNAMIC_TYPE_WORD", "text": long_text},
+                    "major": {"opus": {"title": long_text}},
                 },
             },
         }
@@ -81,11 +78,11 @@ class TestDynamicParsing:
         """HTML 标签应被清除"""
         dyn = {
             "id_str": "1",
+            "type": "DYNAMIC_TYPE_DRAW",
             "modules": {
                 "module_author": {"name": "HTML"},
                 "module_dynamic": {
                     "desc": {
-                        "type": "DYNAMIC_TYPE_WORD",
                         "text": '点<a href="https://example.com">这里</a>查看',
                     },
                 },
@@ -110,10 +107,11 @@ class TestFetchAPI:
                 "items": [
                     {
                         "id_str": "111",
+                        "type": "DYNAMIC_TYPE_DRAW",
                         "modules": {
                             "module_author": {"name": "用户A"},
                             "module_dynamic": {
-                                "desc": {"type": "DYNAMIC_TYPE_WORD", "text": "hello"},
+                                "major": {"opus": {"title": "hello"}},
                             },
                         },
                     },
