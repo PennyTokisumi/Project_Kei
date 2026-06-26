@@ -20,6 +20,7 @@ remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
 hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
+chat_cmd = on_message(rule=to_me() & startswith("chat"), priority=5)
 # 兜底：被 @ 但无匹配指令
 unknown_cmd = on_message(rule=to_me(), priority=99)
 
@@ -142,6 +143,39 @@ async def handle_remove(event: GroupMessageEvent):
     await reload_targets()
 
 
+CHAT_MSGS = [
+    "抵抗するためには前に進まないと。今まではそれも、一人でやらなければと思っていたのですが……結局、人は一人では生きていけないのだと理解しました。\n为了抵抗，必须继续前行。此前我总觉得这些事只能独自承担……但终究还是明白了，人是无法独自活下去的。",
+    "な、何ですか？特に言うことはありませんが……？っ……分かりました……。せ、先生のこと、嫌いではありません……もう、いいですか！？\n怎，怎么了？有没有什么想说的话……？呃……行吧……我、我其实并不讨厌老师……这下可以了吧！？",
+    "こういう言葉は、滅多に言いませんから、ちゃんと聞いてくださいね！？……あまり、危険なことはしないでください。先生が居なくなるのは……私も嫌ですから。\n听好了，我很少说这种话的！？……请你尽量不要做危险的事。因为老师要是不在了……我也会很难过的。",
+    "遠き地の星明かり……という意味です。それだけ昔のことを言っているのだと思います。座標によると、過去と未来は同時に存在するとも言いますから。\n意思是……远方的星光。感觉像是在说久远的往事一样。毕竟根据坐标，过去与未来是同时存在的。",
+    "でもまあ……世の理を知ってしまえば。怒らないでいるのは難しい、と思っているのですが。\n不过嘛……一旦知晓了世间真理。我觉得，想保持不生气实在很难呢。",
+    "食事はちゃんと取っていますか？適度な運動も必要です。早寝早起きが良いのは、大人にも当てはまることなんですよ。\n你有好好吃饭吗？适当的运动也是必要的。早睡早起的好处，对大人也同样适用哦。",
+    "仕事はほどほどに。とはいえ怠けるのもほどほどに。……本当にもう、手が焼けるんですから。\n……真是的，你实在太让人操心啦。工作要适度，不过偷懒也得适可而止。",
+    "……何をニヤニヤしてるんですか！\n……你在那儿偷偷笑什么呢！",
+    "先生がこの世界を見捨てないというのなら。私だって最後まで、絶対に諦めたりしません。\n如果老师不抛弃这个世界的话。那我到最后也不会放弃的。",
+    "私は――先生のこと、嫌いじゃありませんから。\n我——并不讨厌老师呢。",
+    "絶対、大丈夫です。私はずっとここにいます。\n绝对，没问题的。我会一直在这里。",
+    "えっ？何か言いたいことはないか？……ないです。ないったらないと言っているでしょう！\n诶？问我有什么想说的吗？……没有。我说没有就没有！",
+    "先生も休憩を忘れずに！あと歯磨きも！\n老师也别忘记休息！还有刷牙！",
+    "えっ？優しい言葉がほしい……？寝言は時と場所を選んでください！\n诶？想听点温柔的话……？说梦话请选好时间和地点！",
+    "はぁ……手間のかかることをさせないでくださいね。\n唉……请别让我做些费时费力的事啊。",
+]
+
+@chat_cmd.handle()
+async def handle_chat(event: GroupMessageEvent):
+    """闲聊模式"""
+    await chat_cmd.finish(
+        Message(f"\n{random.choice(CHAT_MSGS)}"),
+        at_sender=True,
+    )
+
+STATUS_MSGS = [
+    "えっ？私がちゃんといるのか確認するのが仕事？\n诶？确认我是否好好待着就是你的工作内容吗？",
+    "心配しないでください。私が消えることはありません。\n别担心。我是不会消失的。",
+    "この身体……結構よくできた気がします。\n这个身体……感觉做的相当不错呢。",
+    "自分の身体を持つのは……不便なことでもあるんですね……\n拥有自己的身体……也有不方便的地方呢……",
+]
+
 @status_cmd.handle()
 async def handle_status(event: GroupMessageEvent):
     """查看机器人运行状态"""
@@ -151,11 +185,12 @@ async def handle_status(event: GroupMessageEvent):
     lines = [
         "\nSensei，以下是监测系统状态。",
         "",
-        f"  系统内核: v{VERSION}",
-        f"  总监测目标: {len(all_targets)} 个",
-        f"  本群目标: {len(group_targets)} 个",
-        f"  轮询间隔: {config.poll_interval} 秒",
+        f"系统内核: v{VERSION}",
+        f"总监测目标: {len(all_targets)} 个",
+        f"本群目标: {len(group_targets)} 个",
+        f"轮询间隔: {config.poll_interval} 秒",
         "",
+        random.choice(STATUS_MSGS),
     ]
     await status_cmd.finish(
         Message("\n".join(lines)),
@@ -202,6 +237,7 @@ async def handle_help(event: GroupMessageEvent):
         "",
         "help  -  显示帮助信息",
         "status  -  显示系统运行状态",
+        "chat  -  和Kei聊天",
         "hello ON/OFF  -  开关启动问候",
         "list  -  显示本群监测列表",
         "remove <序号>  -  移除监测目标",
