@@ -1,5 +1,7 @@
 """Project_Kei - B站动态/直播 + 斗鱼直播 监测推送插件"""
 
+import random
+
 from nonebot import get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 
@@ -9,9 +11,12 @@ from tray import tray, update_status
 
 driver = get_driver()
 
-STARTUP_MSG = (
-    "これから、先生のことを見守らせていただきますね。\n今后就让我来守护老师吧。"
-)
+STARTUP_MSGS = [
+    "これから、先生のことを見守らせていただきますね。\n今后就让我来守护老师吧。",
+    "こんにちは、先生。今日のやることをまとめました。\n你好，老师。我已经将今天要做的事项整理好了。",
+    "最初の目標に向けて、まず一歩、ですね。\n向着最初的目标，先迈出一步吧。",
+    "私は、どんな手を使ってでも生き残ってやるつもりですから。\n不管用什么手段，我都会活下去。",
+]
 
 _greeting_sent = False
 
@@ -49,7 +54,7 @@ async def _on_connect(bot: Bot):
             try:
                 await bot.send_group_msg(
                     group_id=gid,
-                    message=MessageSegment.text(STARTUP_MSG),
+                    message=MessageSegment.text(random.choice(STARTUP_MSGS)),
                 )
                 nb_logger.info(f"上线通知已发送 [群{gid}]")
             except Exception as e:

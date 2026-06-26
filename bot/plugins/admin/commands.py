@@ -1,7 +1,9 @@
 """群管理命令 - add / list / remove / status"""
 
-from nonebot import on_message
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
+import random
+
+from nonebot import on_message, on_notice
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment, PokeNotifyEvent
 from nonebot.rule import to_me, startswith
 
 from config import config, VERSION
@@ -154,8 +156,6 @@ async def handle_status(event: GroupMessageEvent):
         f"  本群目标: {len(group_targets)} 个",
         f"  轮询间隔: {config.poll_interval} 秒",
         "",
-        "えっ？私がちゃんといるのか確認するのが仕事？\n心配しないでください。私が消えることはありません。",
-        "诶？确认我是否好好待着就是你的工作内容吗？\n别担心。我是不会消失的。",
     ]
     await status_cmd.finish(
         Message("\n".join(lines)),
@@ -198,16 +198,18 @@ async def handle_hello(event: GroupMessageEvent):
 async def handle_help(event: GroupMessageEvent):
     """显示帮助信息"""
     lines = [
-        "\nSensei，有什么需要Kei帮忙的吗？",
+        "\n先生の頼みなら……仕方ありませんね。\n既然是老师的请求……那就没办法了呢。",
         "",
-        "  help  -  显示帮助信息",
-        "  status  -  显示系统运行状态",
-        "  hello ON/OFF  -  开关启动问候",
-        "  list  -  显示本群监测列表",
-        "  remove <序号>  -  移除监测目标",
-        "  add bilibili_live <房间号>  -  添加B站直播监测",
-        "  add bilibili_dynamic <UID>  -  添加B站动态监测",
-        "  add douyu_live <房间号>  -  添加斗鱼直播监测",
+        "help  -  显示帮助信息",
+        "status  -  显示系统运行状态",
+        "hello ON/OFF  -  开关启动问候",
+        "list  -  显示本群监测列表",
+        "remove <序号>  -  移除监测目标",
+        "add bilibili_live <房间号>  -  添加B站直播监测",
+        "add bilibili_dynamic <UID>  -  添加B站动态监测",
+        "add douyu_live <房间号>  -  添加斗鱼直播监测",
+        "",
+        "私は力になれましたか？\n我能帮上忙吗？",
     ]
     await help_cmd.finish(
         Message("\n".join(lines)),
@@ -215,10 +217,34 @@ async def handle_help(event: GroupMessageEvent):
     )
 
 
+# 拍一拍处理
+poke_handler = on_notice()
+
+
+@poke_handler.handle()
+async def handle_poke(event: PokeNotifyEvent):
+    """群内被拍一拍时回复"""
+    if not event.group_id:
+        return
+    await poke_handler.finish(
+        Message(f"{MessageSegment.at(event.user_id)}\n{random.choice(UNKNOWN_MSGS)}"),
+    )
+
+
+UNKNOWN_MSGS = [
+    "何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。",
+    "どうかしました？えっ？呼んでみただけ……ですか？\n怎么了？诶？只是喊我一下……是吗？",
+    "特に用がないなら呼ばないでください！\n没什么特别的事就别喊我！",
+    "な、なんですか！？何か言ってほしいんですか！？\n干什么！？想让我说点什么吗！？",
+    "なんでいきなり撫でるんですか！？\n突然摸我干什么！？",
+    "他に必要な物はありませんか？あまり悩む時間は残されていません。\n请问还要其他东西吗？我们还能犹豫的时间不多了。",
+]
+
+
 @unknown_cmd.handle()
 async def handle_unknown(event: GroupMessageEvent):
     """兜底：被 @ 但无匹配指令"""
     await unknown_cmd.finish(
-        Message("\n何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。"),
+        Message(f"\n{random.choice(UNKNOWN_MSGS)}"),
         at_sender=True,
     )
