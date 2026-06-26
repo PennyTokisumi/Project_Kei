@@ -1,8 +1,9 @@
 """群管理命令 - add / list / remove / status"""
 
 import random
+from pathlib import Path
 
-from nonebot import on_message, on_notice
+from nonebot import on_message, on_notice, get_bot
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment, PokeNotifyEvent
 from nonebot.rule import to_me, startswith
 
@@ -21,6 +22,7 @@ status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
 hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
 chat_cmd = on_message(rule=to_me() & startswith("chat"), priority=5)
+suicide_cmd = on_message(rule=to_me() & startswith("kawaii"), priority=5)
 # 兜底：被 @ 但无匹配指令
 unknown_cmd = on_message(rule=to_me(), priority=99)
 
@@ -169,6 +171,36 @@ async def handle_chat(event: GroupMessageEvent):
         at_sender=True,
     )
 
+SUICIDE_GIF = Path(__file__).resolve().parent.parent.parent / "kei_suicide.gif"
+
+
+@suicide_cmd.handle()
+async def handle_suicide(event: GroupMessageEvent):
+    """自杀指令：禁言指令者 1 分钟 + 发送 GIF"""
+    # 先发文字消息
+    await suicide_cmd.send(
+        Message("呜……今天必须要跟老师同归于尽！我要先杀了老师再自杀！"),
+        at_sender=True,
+    )
+
+    # 禁言指令者 1 分钟
+    try:
+        bot = get_bot()
+        await bot.call_api(
+            "set_group_ban",
+            group_id=event.group_id,
+            user_id=event.user_id,
+            duration=60,
+        )
+    except Exception:
+        pass  # 禁言失败不阻断（bot 可能没有管理员权限）
+
+    # 发送 GIF
+    if SUICIDE_GIF.exists():
+        await suicide_cmd.send(
+            MessageSegment.image(str(SUICIDE_GIF.resolve())),
+        )
+
 STATUS_MSGS = [
     "えっ？私がちゃんといるのか確認するのが仕事？\n诶？确认我是否好好待着就是你的工作内容吗？",
     "心配しないでください。私が消えることはありません。\n别担心。我是不会消失的。",
@@ -238,6 +270,7 @@ async def handle_help(event: GroupMessageEvent):
         "help  -  显示帮助信息",
         "status  -  显示系统运行状态",
         "chat  -  和Kei聊天",
+        "kawaii  -  夸一夸Kei",
         "hello ON/OFF  -  开关启动问候",
         "list  -  显示本群监测列表",
         "remove <序号>  -  移除监测目标",
