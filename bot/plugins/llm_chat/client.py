@@ -54,9 +54,6 @@ class LLMClient:
             "max_tokens": max_tokens,
             "stream": False,
         }
-        # DeepSeek V4 模型需要 reasoning_effort
-        if "v4" in self._model or "v3" in self._model:
-            payload["reasoning_effort"] = "medium"
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

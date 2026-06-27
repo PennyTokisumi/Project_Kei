@@ -55,14 +55,14 @@ class MemoryManager:
         save_memory(content, importance)
 
     @classmethod
-    def recall(cls, query: str, group_id: int = 0, limit: int = 8) -> list[str]:
-        """关键词检索记忆（当前群优先）"""
-        return search_memory(query, limit, group_id)
+    def recall(cls, query: str, limit: int = 8) -> list[str]:
+        """关键词检索记忆"""
+        return search_memory(query, limit)
 
     @classmethod
-    def get_recent(cls, group_id: int = 0, limit: int = 10) -> list[str]:
-        """获取最近的重要记忆（fallback 用，含全局）"""
-        return get_all_memories(limit, group_id)
+    def get_recent(cls, limit: int = 10) -> list[str]:
+        """获取最近的重要记忆"""
+        return get_all_memories(limit)
 
     # ─── 上下文构建 ──────────────────────────────────
 
@@ -72,8 +72,8 @@ class MemoryManager:
         """构建发给 LLM 的完整 messages 数组"""
         messages = [{"role": "system", "content": PERSONA_PROMPT}]
 
-        # 长期记忆：直接取重要性最高的（当前群优先）
-        memories = cls.get_recent(group_id, 8)
+        # 长期记忆：取重要性最高的 8 条
+        memories = cls.get_recent(8)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
@@ -81,8 +81,8 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆（带角色区分）
-        for role, text in list(_short_term.get(group_id, []))[-10:]:
+        # 短期记忆（带角色区分，只取最近几条避免上下文过长）
+        for role, text in list(_short_term.get(group_id, []))[-6:]:
             messages.append({"role": role, "content": text})
 
         # 当前消息

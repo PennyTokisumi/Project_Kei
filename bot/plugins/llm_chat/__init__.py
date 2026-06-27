@@ -7,11 +7,13 @@
 - 自由聊天监听 — 启用后，无需 @Kei，AI 主动判断是否加入聊天
 """
 
+import re
+
 from nonebot import get_driver, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import Rule, to_me, startswith
 
-from config import VERSION
+from config import VERSION, config
 from ..monitor.database import get_setting, set_setting
 
 from .client import llm_client
@@ -118,6 +120,203 @@ async def handle_llm_usage(event: GroupMessageEvent):
     )
 
 
+# ─── read 指令 ────────────────────────────────────────
+read_cmd = on_message(rule=to_me() & startswith("read"), priority=5)
+
+
+@read_cmd.handle()
+async def handle_read(event: GroupMessageEvent):
+    """@Kei read <文件名> — 读取 data/ 下的文件（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    from .file_reader import safe_read
+    text = event.get_plaintext().strip()
+    parts = text.split()
+    if len(parts) < 2:
+        await read_cmd.finish(Message("\n格式: read <文件名>\n示例: read test.txt"))
+        return
+
+    filename = parts[1]
+    content = safe_read(filename)
+    if not content:
+        await read_cmd.finish(Message(f"文件 '{filename}' 不存在或无法读取。\n请确保文件在 data/ 目录下。"))
+        return
+
+    size_kb = len(content) // 1024
+    await read_cmd.send(Message(f"已读取 {filename}（{size_kb}KB），正在分析..."))
+
+    # 1. 专用提取：裸 HTTP，不开 reasoning_effort，避免 token 被推理吃光
+    import httpx
+    extract_prompt = (
+        "从以下文件内容中提取所有值得长期记住的信息。\n"
+        "每条信息一行，格式: 内容 | 重要性(0.4-1.0)\n"
+        "不要遗漏任何重要信息（人物、关系、偏好、事件、规则等）。\n\n"
+        f"{content[:6000]}\n\n"
+        "示例输出:\n"
+        "爱丽丝是Kei曾经的王女，现在是好朋友 | 0.9\n"
+        "Sensei喜欢喝可乐 | 0.6\n"
+        "只输出内容，不要其他文字。"
+    )
+    extract_text = ""
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            r = await http.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {config.deepseek_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": config.deepseek_model,
+                    "messages": [{"role": "user", "content": extract_prompt}],
+                    "max_tokens": 300,
+                    "temperature": 0.2,
+                    "stream": False,
+                },
+            )
+            extract_text = r.json()["choices"][0]["message"]["content"]
+    except Exception:
+        pass
+
+    from .database import save_memory, cleanup_memory
+    for line in extract_text.split("\n"):
+        line = line.strip()
+        if "|" in line:
+            parts = line.rsplit("|", 1)
+            if len(parts) == 2:
+                mem_text = parts[0].strip()
+                try:
+                    imp = float(parts[1].strip())
+                except ValueError:
+                    imp = 0.6
+                if mem_text and len(mem_text) > 2:
+                    save_memory(mem_text, imp)
+    cleanup_memory()
+
+    # 2. 生成回复
+    msgs = memory.build_context(event.group_id, f"读取文件 {filename}", extract_user_name(event))
+    msgs.insert(1, {
+        "role": "system",
+        "content": (
+            f"用户要求你读取了文件: {filename}\n"
+            f"──── 文件开始 ────\n{content[:8000]}\n──── 文件结束 ────\n"
+            f"请列出文件中的关键信息点，以 Kei 的身份回复。"
+        )
+    })
+    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=512)
+    reply = result.get("content", "").strip() or "……"
+
+    await read_cmd.finish(Message(f"\n{reply}"), at_sender=True)
+    memory.mark_spoke(event.group_id)
+
+
+# ─── memory 指令 ──────────────────────────────────────
+memory_cmd = on_message(rule=to_me() & startswith("memory"), priority=5)
+
+
+@memory_cmd.handle()
+async def handle_memory(event: GroupMessageEvent):
+    """查看长期记忆列表（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    from .database import get_existing_memories
+    mems = get_existing_memories()
+    if not mems:
+        await memory_cmd.finish(Message("\当前没有任何长期记忆。"))
+        return
+
+    lines = [f"Sensei，以下是当前长期记忆（共 {len(mems)} 条）。", ""]
+    for m in mems:
+        lines.append(f"  [{m['id']}] imp={m['importance']:.1f}")
+        lines.append(f"      {m['content']}")
+    await memory_cmd.finish(Message("\n".join(lines)))
+
+
+# ─── edit 指令 ────────────────────────────────────────
+edit_cmd = on_message(rule=to_me() & startswith("edit"), priority=5)
+
+
+@edit_cmd.handle()
+async def handle_edit(event: GroupMessageEvent):
+    """edit <id> <内容> — 修改记忆内容（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    text = event.get_plaintext().strip()
+    parts = text.split(None, 2)  # edit, id, content
+    if len(parts) < 3 or not parts[1].isdigit():
+        await edit_cmd.finish(Message("格式: edit <序号> <新内容>"))
+        return
+
+    mid = int(parts[1])
+    new_content = parts[2].strip()
+    from .database import get_existing_memories, update_memory_content
+    mems = get_existing_memories()
+    if not any(m["id"] == mid for m in mems):
+        await edit_cmd.finish(Message(f"记忆 [{mid}] 不存在。"))
+        return
+
+    update_memory_content(mid, new_content)
+    await edit_cmd.finish(Message(f"记忆 [{mid}] 已更新。"))
+
+
+# ─── imp 指令 ─────────────────────────────────────────
+imp_cmd = on_message(rule=to_me() & startswith("imp"), priority=5)
+
+
+@imp_cmd.handle()
+async def handle_imp(event: GroupMessageEvent):
+    """imp <id> <数字> — 修改重要性（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    text = event.get_plaintext().strip()
+    parts = text.split()
+    if len(parts) < 3 or not parts[1].isdigit():
+        await imp_cmd.finish(Message("格式: imp <序号> <数字>\n示例: imp 2 0.9"))
+        return
+
+    mid = int(parts[1])
+    try:
+        new_imp = float(parts[2])
+    except ValueError:
+        await imp_cmd.finish(Message("重要性必须是数字。"))
+        return
+
+    from .database import get_existing_memories, update_memory_imp
+    mems = get_existing_memories()
+    if not any(m["id"] == mid for m in mems):
+        await imp_cmd.finish(Message(f"记忆 [{mid}] 不存在。"))
+        return
+
+    update_memory_imp(mid, new_imp)
+    await imp_cmd.finish(Message(f"记忆 [{mid}] 重要性已更新为 {new_imp}。"))
+
+
+# ─── forget 指令 ──────────────────────────────────────
+forget_cmd = on_message(rule=to_me() & startswith("forget"), priority=5)
+
+
+@forget_cmd.handle()
+async def handle_forget(event: GroupMessageEvent):
+    """forget <id> — 删除记忆（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    text = event.get_plaintext().strip()
+    parts = text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        await forget_cmd.finish(Message("格式: forget <序号>"))
+        return
+
+    mid = int(parts[1])
+    from .database import delete_memory_by_id
+    delete_memory_by_id(mid)
+    await forget_cmd.finish(Message(f"记忆 [{mid}] 已删除。"))
+
+
 # ─── 注册 history 指令 ─────────────────────────────────
 from . import history  # noqa: E402, F401
 
@@ -139,56 +338,25 @@ async def handle_llm_at(event: GroupMessageEvent):
     sender_name = extract_user_name(event)
 
     memory.add_message(gid, sender_name, msg_text)
-
-    # 检测文件读取请求
-    file_content = None
-    read_filename = None
-    try:
-        from .file_reader import extract_filename, safe_read
-        read_filename = extract_filename(msg_text)
-        if read_filename:
-            file_content = safe_read(read_filename)
-    except Exception:
-        pass
-
-    if read_filename and not file_content:
-        msgs = memory.build_context(gid, msg_text, sender_name)
-        msgs.insert(0, {
-            "role": "system",
-            "content": f"用户要求读取文件 '{read_filename}'，但该文件不存在。请告知用户。"
-        })
-    elif file_content:
-        size_kb = len(file_content) // 1024
-        msgs = memory.build_context(gid, msg_text, sender_name)
-        msgs.insert(1, {
-            "role": "system",
-            "content": (
-                f"【用户要求读取文件: {read_filename}（{size_kb}KB）。请基于此文件内容回应。】\n"
-                f"──── 文件开始 ────\n"
-                f"{file_content[:8000]}\n"
-                f"──── 文件结束 ────"
-            )
-        })
-    else:
-        msgs = memory.build_context(gid, msg_text, sender_name)
+    msgs = memory.build_context(gid, msg_text, sender_name)
     msgs.append({
         "role": "system",
         "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
     })
 
-    max_tok = 512 if file_content else 256
-    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=max_tok)
+    result = await llm_client.chat(messages=msgs, temperature=0.6, max_tokens=256)
     reply = result.get("content", "").strip()
     if not reply:
         reply = "……"
     memory.add_assistant_message(gid, reply)
     memory.mark_spoke(gid)
-    await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
-    # 异步提取长期记忆（传入文件内容如果有）
+    # 提取记忆
     from .remember import extract_and_save
-    import asyncio
-    asyncio.ensure_future(extract_and_save(sender_name, msg_text, reply, gid,
-                                           extra=file_content))
+    try:
+        await extract_and_save(sender_name, msg_text, reply)
+    except Exception:
+        pass
+    await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
 
 
 # ─── 自由聊天监听 ────────────────────────────────────
@@ -219,9 +387,13 @@ async def handle_free_chat(event: GroupMessageEvent):
     if not memory.can_speak(group_id):
         return
 
-    should = await should_speak(group_id, msg_text, sender_name)
-    if not should:
-        return
+    # 快速规则：Sensei 或提到 Kei → 必定回复
+    is_sensei = "823262716" in sender_name
+    mentions_kei = bool(re.search(r"(?i)\bkei\b|ケイ|凯伊|kei", msg_text))
+    if not is_sensei and not mentions_kei:
+        should = await should_speak(group_id, msg_text, sender_name)
+        if not should:
+            return
 
     msgs = memory.build_context(group_id, msg_text, sender_name)
     msgs.append({
@@ -229,7 +401,7 @@ async def handle_free_chat(event: GroupMessageEvent):
         "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=512)
+    result = await llm_client.chat(messages=msgs, temperature=0.6, max_tokens=512)
     reply = result.get("content", "").strip()
     if not reply:
         return
@@ -242,9 +414,7 @@ async def handle_free_chat(event: GroupMessageEvent):
         memory.mark_spoke(group_id)
         # 异步提取长期记忆
         from .remember import extract_and_save
-        import asyncio
-        asyncio.ensure_future(extract_and_save(sender_name, msg_text, reply, group_id,
-                                               extra=None))
+        await extract_and_save(sender_name, msg_text, reply)
     except Exception:
         pass
 
