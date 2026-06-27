@@ -3,7 +3,15 @@
 from collections import deque
 from typing import Optional
 
-from .database import get_all_memories, save_memory, search_memory
+from .database import (
+    get_all_memories,
+    save_memory,
+    search_memory,
+    save_short_term,
+    load_short_term,
+    cleanup_short_term,
+    load_all_short_term_groups,
+)
 from .persona import PERSONA_PROMPT
 
 # {group_id: deque(maxlen=30)}，元素为 (role, text)
@@ -19,6 +27,21 @@ COOLDOWN_SECONDS = 3
 class MemoryManager:
     """三层记忆管理"""
 
+    # ─── 初始化 ────────────────────────────────────────
+
+    @classmethod
+    def load_from_db(cls):
+        """从数据库恢复所有群的短期记忆"""
+        all_groups = load_all_short_term_groups()
+        for gid, msgs in all_groups.items():
+            dq = deque(maxlen=30)
+            for m in msgs:
+                if m["role"] == "user":
+                    dq.append(("user", f"{m['sender']}: {m['content']}"))
+                else:
+                    dq.append(("assistant", m["content"]))
+            _short_term[gid] = dq
+
     # ─── 短期记忆 ────────────────────────────────────
 
     @classmethod
@@ -27,6 +50,8 @@ class MemoryManager:
         if group_id not in _short_term:
             _short_term[group_id] = deque(maxlen=30)
         _short_term[group_id].append(("user", f"{sender}: {content}"))
+        save_short_term(group_id, "user", sender, content)
+        cleanup_short_term(group_id, 30)
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
@@ -34,6 +59,8 @@ class MemoryManager:
         if group_id not in _short_term:
             _short_term[group_id] = deque(maxlen=30)
         _short_term[group_id].append(("assistant", content))
+        save_short_term(group_id, "assistant", "", content)
+        cleanup_short_term(group_id, 30)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -59,11 +86,6 @@ class MemoryManager:
         """关键词检索记忆"""
         return search_memory(query, limit)
 
-    @classmethod
-    def get_recent(cls, limit: int = 10) -> list[str]:
-        """获取最近的重要记忆"""
-        return get_all_memories(limit)
-
     # ─── 上下文构建 ──────────────────────────────────
 
     @classmethod
@@ -72,8 +94,8 @@ class MemoryManager:
         """构建发给 LLM 的完整 messages 数组"""
         messages = [{"role": "system", "content": PERSONA_PROMPT}]
 
-        # 长期记忆：取重要性最高的 8 条
-        memories = cls.get_recent(8)
+        # 长期记忆：全部加载（limit=0 = 无限制）
+        memories = get_all_memories(limit=0)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
@@ -81,8 +103,8 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆（带角色区分，只取最近几条避免上下文过长）
-        for role, text in list(_short_term.get(group_id, []))[-6:]:
+        # 短期记忆：最近 30 条（由 deque maxlen 保证不超额）
+        for role, text in _short_term.get(group_id, []):
             messages.append({"role": role, "content": text})
 
         # 当前消息

@@ -44,6 +44,16 @@ def init_llm_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS llm_short_term (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            sender TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
 
 
@@ -79,13 +89,18 @@ def search_memory(query: str, limit: int = 8) -> list[str]:
     return [r["content"] for r in rows]
 
 
-def get_all_memories(limit: int = 20) -> list[str]:
-    """获取最近的重要记忆"""
+def get_all_memories(limit: int = 0) -> list[str]:
+    """获取最近的重要记忆（limit=0 表示全部）"""
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT content FROM llm_memory ORDER BY importance DESC, id DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
+    if limit > 0:
+        rows = conn.execute(
+            "SELECT content FROM llm_memory ORDER BY importance DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT content FROM llm_memory ORDER BY importance DESC, id DESC"
+        ).fetchall()
     return [r["content"] for r in rows]
 
 
@@ -223,3 +238,63 @@ def get_usage_total() -> dict:
         "FROM llm_token_usage"
     ).fetchone()
     return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+
+
+# ─── 短期记忆持久化 ──────────────────────────────────
+
+
+def save_short_term(group_id: int, role: str, sender: str, content: str):
+    """保存一条短期对话"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO llm_short_term (group_id, role, sender, content) VALUES (?, ?, ?, ?)",
+        (group_id, role, sender, content),
+    )
+    conn.commit()
+
+
+def load_short_term(group_id: int, limit: int = 30) -> list[dict]:
+    """加载某群最近 N 条短期对话（按时间正序返回）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT role, sender, content FROM llm_short_term "
+        "WHERE group_id=? ORDER BY id DESC LIMIT ?",
+        (group_id, limit),
+    ).fetchall()
+    return [{"role": r["role"], "sender": r["sender"], "content": r["content"]}
+            for r in reversed(rows)]
+
+
+def cleanup_short_term(group_id: int, max_count: int = 30):
+    """每个群只保留最近 max_count 条短期对话"""
+    conn = _get_conn()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM llm_short_term WHERE group_id=?", (group_id,)
+    ).fetchone()[0]
+    if count > max_count:
+        excess = count - max_count
+        conn.execute(
+            "DELETE FROM llm_short_term WHERE id IN "
+            "(SELECT id FROM llm_short_term WHERE group_id=? ORDER BY id ASC LIMIT ?)",
+            (group_id, excess),
+        )
+        conn.commit()
+
+
+def load_all_short_term_groups() -> dict[int, list[dict]]:
+    """加载所有群的短期记忆，按 group_id 分组"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT group_id, role, sender, content FROM llm_short_term ORDER BY id ASC"
+    ).fetchall()
+    result: dict[int, list[dict]] = {}
+    for r in rows:
+        gid = r["group_id"]
+        if gid not in result:
+            result[gid] = []
+        result[gid].append({
+            "role": r["role"],
+            "sender": r["sender"],
+            "content": r["content"],
+        })
+    return result

@@ -466,6 +466,7 @@ _greeting_sent = False
 @driver.on_startup
 async def _llm_startup():
     init_llm_db()
+    memory.load_from_db()
     if llm_client.available:
         from nonebot import logger as nb_logger
         nb_logger.info("LLM Chat 插件已就绪")
