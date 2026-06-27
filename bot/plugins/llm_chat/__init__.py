@@ -403,6 +403,9 @@ from . import history  # noqa: E402, F401
 def _llm_on_rule(event: GroupMessageEvent) -> bool:
     if not event.group_id:
         return False
+    # 忽略 bot 自己的消息，防止自循环
+    if event.user_id == event.self_id:
+        return False
     return get_setting(f"llm_enabled_{event.group_id}", "0") == "1"
 
 llm_at_handler = on_message(rule=to_me() & Rule(_llm_on_rule), priority=6, block=True)
@@ -440,8 +443,11 @@ async def handle_llm_at(event: GroupMessageEvent):
 # ─── 自由聊天监听 ────────────────────────────────────
 # 仅处理「不含 @Kei 的群消息」，由 LLM 自主决定是否插话
 def _no_at_rule(event: GroupMessageEvent) -> bool:
-    """消息不含 @Kei"""
+    """消息不含 @Kei，且非 bot 自身消息"""
     if not event.group_id:
+        return False
+    # 忽略 bot 自己的消息，防止自循环
+    if event.user_id == event.self_id:
         return False
     for seg in event.message:
         if seg.type == "at" and seg.data.get("qq") == str(event.self_id):
