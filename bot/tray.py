@@ -2,12 +2,12 @@
 
 import logging
 import os
-import signal
-import subprocess
 import threading
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+
+from napcat import shutdown as _shutdown_napcat
 
 try:
     import pystray
@@ -216,32 +216,8 @@ class TrayIcon:
             icon.stop()
         except Exception:
             pass
-        _kill_napcat()
+        _shutdown_napcat()
         os._exit(0)
-
-
-# ─── 进程管理 ──────────────────────────────────────────────────
-
-def _kill_napcat():
-    """杀掉 NapCatQQ 所有相关进程（按命令行匹配 napcat 关键字）"""
-    try:
-        # 用 wmic 查找命令行含 napcat 的进程 PID
-        out = subprocess.run(
-            'wmic process where "commandline like \'%%napcat%%\'" get processid /format:csv',
-            shell=True, capture_output=True, text=True, timeout=10,
-        ).stdout
-        for line in out.strip().splitlines():
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if p.isdigit():
-                    try:
-                        os.kill(int(p), signal.SIGTERM)
-                        logger.info(f"已终止 NapCat 进程 PID={p}")
-                    except Exception:
-                        pass
-    except Exception as e:
-        logger.warning(f"终止 NapCat 失败: {e}")
 
 
 # 全局单例

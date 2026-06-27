@@ -1,8 +1,12 @@
 """QQ 群监测机器人 - NoneBot2 启动入口"""
 
+import os
 import sys
+
 import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+
+from napcat import launch as _launch_napcat
 
 
 def _check_running() -> None:
@@ -32,6 +36,7 @@ def _check_running() -> None:
 def main():
     """初始化 NoneBot 并运行"""
     _check_running()
+    _launch_napcat()
     nonebot.init()
 
     # 注册 OneBot v11 适配器
