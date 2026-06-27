@@ -16,6 +16,11 @@ data/logs/
 # NapCatQQ（QQ 客户端，不提交到 git）
 napcat/
 
+# 聊天日志
+data/chatlogs/
+data/*.txt
+data/*.bak
+
 # 下载文件
 Download/
 
