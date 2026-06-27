@@ -5,9 +5,10 @@ from datetime import datetime
 
 from nonebot import on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
-from nonebot.rule import to_me, startswith
+from nonebot.rule import Rule, to_me
 
 from config import DATA_DIR
+from .utils import extract_text
 
 CHATLOG_DIR = DATA_DIR / "chatlogs"
 
@@ -57,7 +58,10 @@ async def fetch_and_save(bot: Bot, group_id: int, count: int = 100,
 
 # ─── 指令 ────────────────────────────────────────────
 
-history_cmd = on_message(rule=to_me() & startswith("history"), priority=5)
+history_cmd = on_message(
+    rule=to_me() & Rule(lambda e: extract_text(e).strip().startswith("history")),
+    priority=5,
+)
 
 
 @history_cmd.handle()
@@ -67,7 +71,7 @@ async def handle_history(event: GroupMessageEvent, bot: Bot):
         return  # 非 Sensei 静默，交给 unknown_cmd
 
     # 解析数量参数: history 200 → 200 条
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split()
     msg_count = 100
     if len(parts) >= 2 and parts[1].isdigit():

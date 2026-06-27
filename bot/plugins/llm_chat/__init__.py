@@ -11,7 +11,7 @@ import re
 
 from nonebot import get_driver, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
-from nonebot.rule import Rule, to_me, startswith
+from nonebot.rule import Rule, to_me
 
 from config import VERSION, config
 from ..monitor.database import get_setting, set_setting
@@ -25,17 +25,26 @@ from .utils import extract_text, extract_user_name
 
 driver = get_driver()
 
+# ─── 指令匹配（用 extract_text 避免 @mention 干扰）─────
+
+def _cmd_rule(prefix: str) -> Rule:
+    """匹配 @Kei 后紧跟 prefix 的消息"""
+    def checker(event: GroupMessageEvent) -> bool:
+        return extract_text(event).strip().startswith(prefix)
+    return Rule(checker)
+
+
 # ─── 命令：KEI ON/OFF ────────────────────────────────
-kei_enable_cmd = on_message(rule=to_me() & startswith("KEI"), priority=5)
+kei_enable_cmd = on_message(rule=to_me() & _cmd_rule("KEI"), priority=5)
 
 
 @kei_enable_cmd.handle()
 async def handle_kei_enable(event: GroupMessageEvent):
     """开关 LLM 群聊功能（仅群主/管理员可用）"""
     if str(event.user_id) != "823262716":
-        return  # 非 Sensei 静默，交给 unknown_cmd
+        return
 
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split()
     if len(parts) < 2:
         await kei_enable_cmd.finish(
@@ -88,7 +97,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
 
 
 # ─── 命令：LLM ────────────────────────────────────────
-llm_usage_cmd = on_message(rule=to_me() & startswith("LLM"), priority=5)
+llm_usage_cmd = on_message(rule=to_me() & _cmd_rule("LLM"), priority=5)
 
 
 @llm_usage_cmd.handle()
@@ -126,7 +135,7 @@ async def handle_llm_usage(event: GroupMessageEvent):
 
 
 # ─── read 指令 ────────────────────────────────────────
-read_cmd = on_message(rule=to_me() & startswith("read"), priority=5)
+read_cmd = on_message(rule=to_me() & _cmd_rule("read"), priority=5)
 
 
 @read_cmd.handle()
@@ -136,7 +145,7 @@ async def handle_read(event: GroupMessageEvent):
         return
 
     from .file_reader import safe_read
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split()
     if len(parts) < 2:
         await read_cmd.finish(Message("\n格式: read <文件名>\n示例: read test.txt"))
@@ -217,7 +226,7 @@ async def handle_read(event: GroupMessageEvent):
 
 
 # ─── memory 指令 ──────────────────────────────────────
-memory_cmd = on_message(rule=to_me() & startswith("memory"), priority=5)
+memory_cmd = on_message(rule=to_me() & _cmd_rule("memory"), priority=5)
 
 
 @memory_cmd.handle()
@@ -240,7 +249,7 @@ async def handle_memory(event: GroupMessageEvent):
 
 
 # ─── remember 指令 ─────────────────────────────────────
-addmem_cmd = on_message(rule=to_me() & startswith("remember"), priority=5)
+addmem_cmd = on_message(rule=to_me() & _cmd_rule("remember"), priority=5)
 
 
 @addmem_cmd.handle()
@@ -249,7 +258,7 @@ async def handle_addmem(event: GroupMessageEvent):
     if str(event.user_id) != "823262716":
         return
 
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split(None, 2)
     if len(parts) < 3:
         await addmem_cmd.finish(Message("格式: remember <重要度> <内容>\n示例: remember 0.8 Sensei喜欢喝可乐"))
@@ -268,7 +277,7 @@ async def handle_addmem(event: GroupMessageEvent):
 
 
 # ─── edit 指令 ────────────────────────────────────────
-edit_cmd = on_message(rule=to_me() & startswith("edit"), priority=5)
+edit_cmd = on_message(rule=to_me() & _cmd_rule("edit"), priority=5)
 
 
 @edit_cmd.handle()
@@ -277,7 +286,7 @@ async def handle_edit(event: GroupMessageEvent):
     if str(event.user_id) != "823262716":
         return
 
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split(None, 2)  # edit, id, content
     if len(parts) < 3 or not parts[1].isdigit():
         await edit_cmd.finish(Message("格式: edit <序号> <新内容>"))
@@ -296,7 +305,7 @@ async def handle_edit(event: GroupMessageEvent):
 
 
 # ─── imp 指令 ─────────────────────────────────────────
-imp_cmd = on_message(rule=to_me() & startswith("imp"), priority=5)
+imp_cmd = on_message(rule=to_me() & _cmd_rule("imp"), priority=5)
 
 
 @imp_cmd.handle()
@@ -305,7 +314,7 @@ async def handle_imp(event: GroupMessageEvent):
     if str(event.user_id) != "823262716":
         return
 
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split()
     if len(parts) < 3 or not parts[1].isdigit():
         await imp_cmd.finish(Message("格式: imp <序号> <数字>\n示例: imp 2 0.9"))
@@ -329,7 +338,7 @@ async def handle_imp(event: GroupMessageEvent):
 
 
 # ─── forget 指令 ──────────────────────────────────────
-forget_cmd = on_message(rule=to_me() & startswith("forget"), priority=5)
+forget_cmd = on_message(rule=to_me() & _cmd_rule("forget"), priority=5)
 
 
 @forget_cmd.handle()
@@ -338,7 +347,7 @@ async def handle_forget(event: GroupMessageEvent):
     if str(event.user_id) != "823262716":
         return
 
-    text = event.get_plaintext().strip()
+    text = extract_text(event).strip()
     parts = text.split()
     if len(parts) < 2 or not parts[1].isdigit():
         await forget_cmd.finish(Message("格式: forget <序号>"))
@@ -351,7 +360,7 @@ async def handle_forget(event: GroupMessageEvent):
 
 
 # ─── sensei 指令 ──────────────────────────────────────
-sensei_cmd = on_message(rule=to_me() & startswith("sensei"), priority=5)
+sensei_cmd = on_message(rule=to_me() & _cmd_rule("sensei"), priority=5)
 
 
 @sensei_cmd.handle()
