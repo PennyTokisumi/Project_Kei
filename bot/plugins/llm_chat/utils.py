@@ -22,5 +22,6 @@ def extract_text(event: GroupMessageEvent) -> str:
 
 
 def extract_user_name(event: GroupMessageEvent) -> str:
-    """获取发送者昵称"""
-    return event.sender.card or event.sender.nickname or f"用户{event.user_id}"
+    """获取发送者昵称（含 QQ 号，供 Kei 识别 Sensei）"""
+    name = event.sender.card or event.sender.nickname or f"用户{event.user_id}"
+    return f"{name}(QQ:{event.user_id})"

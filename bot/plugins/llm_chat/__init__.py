@@ -147,7 +147,7 @@ async def handle_llm_at(event: GroupMessageEvent):
         "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.8, max_tokens=256)
+    result = await llm_client.chat(messages=msgs, temperature=0.7, max_tokens=256)
     reply = result.get("content", "").strip()
     if not reply:
         reply = "……"
@@ -171,10 +171,40 @@ free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
 
 @free_chat.handle()
 async def handle_free_chat(event: GroupMessageEvent):
-    """自由聊天诊断"""
-    from nonebot import get_bot
-    bot = get_bot()
-    await bot.send_group_msg(group_id=event.group_id, message="FREE_CHAT: handler已触发")
+    """自由聊天：无需 @Kei，AI 自主决定是否发言"""
+    group_id = event.group_id
+    msg_text = extract_text(event)
+    if not msg_text or len(msg_text) < 2:
+        return
+
+    sender_name = extract_user_name(event)
+    memory.add_message(group_id, sender_name, msg_text)
+
+    if not memory.can_speak(group_id):
+        return
+
+    should = await should_speak(group_id, msg_text, sender_name)
+    if not should:
+        return
+
+    msgs = memory.build_context(group_id, msg_text, sender_name)
+    msgs.append({
+        "role": "system",
+        "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
+    })
+
+    result = await llm_client.chat(messages=msgs, temperature=0.7, max_tokens=256)
+    reply = result.get("content", "").strip()
+    if not reply:
+        return
+
+    try:
+        from nonebot import get_bot
+        bot = get_bot()
+        await bot.send_group_msg(group_id=group_id, message=Message(reply))
+        memory.mark_spoke(group_id)
+    except Exception:
+        pass
 
 
 # ─── 生命周期 ────────────────────────────────────────
