@@ -103,8 +103,11 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆：最近 15 条（由 deque maxlen 保证不超额）
-        for role, text in _short_term.get(group_id, []):
+        # 短期记忆：取最近 N 条，但排除最后一条（即当前消息，后面单独追加）
+        short = list(_short_term.get(group_id, []))
+        if short:
+            short = short[:-1]  # 去掉末尾（当前消息，已由 add_message 提前写入）
+        for role, text in short:
             messages.append({"role": role, "content": text})
 
         # 当前消息

@@ -30,3 +30,5 @@ Download/
 .vscode/
 *.swp
 data/.pid
+.mem_diag.txt
+msg_debug.log

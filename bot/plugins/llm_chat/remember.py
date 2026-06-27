@@ -85,15 +85,6 @@ async def extract_and_save(sender: str, user_msg: str, kei_reply: str,
         if content.endswith("```"):
             content = content[:-3]
 
-    # 诊断
-    from pathlib import Path
-    from config import DATA_DIR
-    diag = DATA_DIR / ".mem_diag.txt"
-    try:
-        diag.write_text(f"RAW={raw[:300]}\n", encoding="utf-8")
-    except Exception:
-        pass
-
     try:
         data = json.loads(content.strip())
     except json.JSONDecodeError:
