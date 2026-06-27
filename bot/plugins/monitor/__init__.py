@@ -71,6 +71,8 @@ async def _on_connect(bot: Bot):
 @driver.on_shutdown
 async def _on_shutdown():
     nb_logger.info("Project_Kei 关闭中...")
+    # 清理 PID 文件
+    (DATA_DIR / ".pid").unlink(missing_ok=True)
     update_status(alive=False)
     await stop()
     tray.stop()

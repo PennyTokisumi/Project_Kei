@@ -315,6 +315,7 @@ async def handle_sensei(event: GroupMessageEvent):
         "",
         "── 记忆管理 ──",
         "memory  -  查看长期记忆列表",
+        "remember <IMP> <内容>  -  添加记忆",
         "edit <序号> <内容>  -  修改记忆内容",
         "imp <序号> <数字>  -  修改记忆重要性",
         "forget <序号>  -  删除记忆",

@@ -196,3 +196,30 @@ def get_usage_today() -> dict:
         (today,),
     ).fetchone()
     return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+
+
+def get_usage_yesterday() -> dict:
+    """查询昨日 token 用量"""
+    conn = _get_conn()
+    import datetime
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(prompt_tokens),0) AS p, "
+        "COALESCE(SUM(completion_tokens),0) AS c, "
+        "COUNT(*) AS n "
+        "FROM llm_token_usage WHERE date(created_at)=?",
+        (yesterday,),
+    ).fetchone()
+    return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+
+
+def get_usage_total() -> dict:
+    """查询累计 token 用量"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(prompt_tokens),0) AS p, "
+        "COALESCE(SUM(completion_tokens),0) AS c, "
+        "COUNT(*) AS n "
+        "FROM llm_token_usage"
+    ).fetchone()
+    return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}

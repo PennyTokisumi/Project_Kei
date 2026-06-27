@@ -46,6 +46,15 @@ if exist "%SIGNAL%" del "%SIGNAL%"
 timeout /t 1 /nobreak >nul
 if not exist "%SIGNAL%" goto wait_loop
 
+:: 检查是否重复启动
+findstr /c:"DUPLICATE" "%SIGNAL%" >nul 2>&1
+if %errorlevel% equ 0 (
+    del "%SIGNAL%"
+    echo   Kei 已在运行中，无需重复启动。
+    timeout /t 2 /nobreak >nul
+    exit /b 1
+)
+
 del "%SIGNAL%"
 echo   KEI 启动成功
 echo   托盘右键可管理机器人

@@ -60,12 +60,10 @@ async def handle_kei_enable(event: GroupMessageEvent):
             temperature=0.0,
             max_tokens=128,
         )
-        test_reply = test_result.get("content", "").strip()
-        test_error = test_result.get("error", "")
-        if not test_reply:
-            err_detail = f"\n错误详情: {test_error}" if test_error else ""
+        if not test_result.get("content", "").strip():
+            err = test_result.get("error", "")
             await kei_enable_cmd.finish(
-                Message(f"\n❌ DeepSeek API 连接失败。{err_detail}"
+                Message(f"\n❌ DeepSeek API 连接失败。"
                         "\n请检查 API Key 和网络。未开启 LLM 功能。"),
                 at_sender=True,
             )
@@ -73,7 +71,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
 
         set_setting(key, "1")
         await kei_enable_cmd.finish(
-            Message(f"\nSensei，Kei 已接入本群聊天。（API 测试回复: {test_reply}）"),
+            Message("\nSensei，Kei 已接入本群聊天。"),
             at_sender=True,
         )
     elif arg == "OFF":
@@ -99,22 +97,29 @@ async def handle_llm_usage(event: GroupMessageEvent):
     if str(event.user_id) != "823262716":
         return  # 非 Sensei 静默，交给 unknown_cmd
 
-    usage = get_usage_today()
-    # DeepSeek 定价（RMB / 1M tokens，按约 7.2 汇率）
+    from .database import get_usage_yesterday, get_usage_total
+    today = get_usage_today()
+    yesterday = get_usage_yesterday()
+    total = get_usage_total()
     price_prompt = 2.02
     price_completion = 3.02
-    cost = (usage["prompt"] / 1_000_000 * price_prompt +
-            usage["completion"] / 1_000_000 * price_completion)
+
+    def _cost(p, c):
+        return p / 1_000_000 * price_prompt + c / 1_000_000 * price_completion
 
     await llm_usage_cmd.finish(
         Message(
-            f"\nSensei，以下是今日 LLM Token 用量。\n"
+            f"\nSensei，以下是 LLM Token 用量。\n"
             f"\n"
-            f"  调用次数: {usage['calls']}\n"
-            f"  Prompt: {usage['prompt']:,} tokens\n"
-            f"  Completion: {usage['completion']:,} tokens\n"
-            f"  今日合计: {usage['prompt'] + usage['completion']:,} tokens\n"
-            f"  预估费用: ¥{cost:.4f}"
+            f"  [今日] 调用 {today['calls']} 次"
+            f" | {today['prompt'] + today['completion']:,} tokens"
+            f" | ¥{_cost(today['prompt'], today['completion']):.2f}\n"
+            f"  [昨日] 调用 {yesterday['calls']} 次"
+            f" | {yesterday['prompt'] + yesterday['completion']:,} tokens"
+            f" | ¥{_cost(yesterday['prompt'], yesterday['completion']):.2f}\n"
+            f"  [累计] 调用 {total['calls']} 次"
+            f" | {total['prompt'] + total['completion']:,} tokens"
+            f" | ¥{_cost(total['prompt'], total['completion']):.2f}"
         ),
         at_sender=True,
     )
@@ -232,6 +237,34 @@ async def handle_memory(event: GroupMessageEvent):
         lines.append(f"  [{m['id']}] imp={m['importance']:.1f}")
         lines.append(f"      {m['content']}")
     await memory_cmd.finish(Message("\n".join(lines)))
+
+
+# ─── remember 指令 ─────────────────────────────────────
+addmem_cmd = on_message(rule=to_me() & startswith("remember"), priority=4, block=True)
+
+
+@addmem_cmd.handle()
+async def handle_addmem(event: GroupMessageEvent):
+    """remember <imp> <内容> — 直接添加记忆（仅 Sensei）"""
+    if str(event.user_id) != "823262716":
+        return
+
+    text = event.get_plaintext().strip()
+    parts = text.split(None, 2)
+    if len(parts) < 3:
+        await addmem_cmd.finish(Message("格式: remember <重要度> <内容>\n示例: remember 0.8 Sensei喜欢喝可乐"))
+        return
+
+    try:
+        imp = float(parts[1])
+    except ValueError:
+        await addmem_cmd.finish(Message("重要度必须是数字。"))
+        return
+
+    content = parts[2].strip()
+    from .database import save_memory
+    save_memory(content, imp)
+    await addmem_cmd.finish(Message(f"记忆已添加。imp={imp:.1f}"))
 
 
 # ─── edit 指令 ────────────────────────────────────────
