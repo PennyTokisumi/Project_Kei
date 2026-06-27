@@ -5,6 +5,7 @@ import random
 from nonebot import get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 
+from config import DATA_DIR
 from .database import get_setting, list_targets
 from .scheduler import start, stop
 from tray import tray, update_status
@@ -62,6 +63,8 @@ async def _on_connect(bot: Bot):
 
     # 切换托盘为绿点
     tray.set_ready()
+    # 写入启动完成信号（供 start.bat 轮询）
+    (DATA_DIR / ".startup_ok").touch()
     nb_logger.info("Project_Kei 启动完成")
 
 

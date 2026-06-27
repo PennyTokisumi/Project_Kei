@@ -184,7 +184,11 @@ class TrayIcon:
     def stop(self):
         """停止托盘图标"""
         if self._icon:
+            self._icon.visible = False
             self._icon.stop()
+            # 等待 pystray 线程处理完 NIM_DELETE，否则图标残留
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=2.0)
             logger.info("托盘图标已停止")
 
     def set_ready(self):
@@ -204,7 +208,14 @@ class TrayIcon:
 
     def _on_shutdown(self, icon: "pystray.Icon", item):
         """右键关闭机器人 — 安全关闭所有相关进程"""
-        icon.stop()
+        try:
+            icon.visible = False
+        except Exception:
+            pass
+        try:
+            icon.stop()
+        except Exception:
+            pass
         _kill_napcat()
         os._exit(0)
 

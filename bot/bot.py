@@ -15,6 +15,7 @@ def main():
     # 加载插件
     nonebot.load_plugin("plugins.monitor")
     nonebot.load_plugin("plugins.admin")
+    nonebot.load_plugin("plugins.llm_chat")
 
     nonebot.run()
 

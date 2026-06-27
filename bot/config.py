@@ -28,7 +28,14 @@ class Config(BaseSettings):
     # 日志
     log_level: str = Field(default="INFO")
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # LLM
+    deepseek_api_key: str = Field(default="", description="DeepSeek API Key")
+    deepseek_model: str = Field(default="deepseek-v4-flash", description="DeepSeek 模型名")
+
+    model_config = {
+        "env_file": str(Path(__file__).resolve().parent / ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
 
 # 路径解析

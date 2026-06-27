@@ -31,7 +31,7 @@ start http://127.0.0.1:6099/webui/
 
 :: ===== 2. NoneBot =====
 echo [2/2] 启动 NoneBot ...
-timeout /t 8 /nobreak >nul
+timeout /t 1 /nobreak >nul
 
 set "VBS=%TEMP%\nb_hidden.vbs"
 (echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%ROOT%bot"" && ""%ROOT%.venv\Scripts\python.exe"" bot.py", 0, False) > "%VBS%"
@@ -39,8 +39,16 @@ cscript //nologo "%VBS%"
 del "%VBS%"
 
 echo.
-echo   全部启动完成（后台运行）
+echo   等待 Kei 启动完成...
+set "SIGNAL=%ROOT%data\.startup_ok"
+if exist "%SIGNAL%" del "%SIGNAL%"
+:wait_loop
+timeout /t 1 /nobreak >nul
+if not exist "%SIGNAL%" goto wait_loop
+
+del "%SIGNAL%"
+echo   KEI 启动成功
 echo   托盘右键可管理机器人
-echo   5秒后自动关闭此窗口
-timeout /t 5 /nobreak >nul
+echo   2秒后自动关闭此窗口
+timeout /t 2 /nobreak >nul
 exit
