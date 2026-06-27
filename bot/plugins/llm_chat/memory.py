@@ -14,7 +14,7 @@ from .database import (
 )
 from .persona import PERSONA_PROMPT
 
-# {group_id: deque(maxlen=30)}，元素为 (role, text)
+# {group_id: deque(maxlen=15)}，元素为 (role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
@@ -34,7 +34,7 @@ class MemoryManager:
         """从数据库恢复所有群的短期记忆"""
         all_groups = load_all_short_term_groups()
         for gid, msgs in all_groups.items():
-            dq = deque(maxlen=30)
+            dq = deque(maxlen=15)
             for m in msgs:
                 if m["role"] == "user":
                     dq.append(("user", f"{m['sender']}: {m['content']}"))
@@ -48,19 +48,19 @@ class MemoryManager:
     def add_message(cls, group_id: int, sender: str, content: str):
         """记录用户消息"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=30)
+            _short_term[group_id] = deque(maxlen=15)
         _short_term[group_id].append(("user", f"{sender}: {content}"))
         save_short_term(group_id, "user", sender, content)
-        cleanup_short_term(group_id, 30)
+        cleanup_short_term(group_id, 15)
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
         """记录 Kei 自己的回复"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=30)
+            _short_term[group_id] = deque(maxlen=15)
         _short_term[group_id].append(("assistant", content))
         save_short_term(group_id, "assistant", "", content)
-        cleanup_short_term(group_id, 30)
+        cleanup_short_term(group_id, 15)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -94,8 +94,8 @@ class MemoryManager:
         """构建发给 LLM 的完整 messages 数组"""
         messages = [{"role": "system", "content": PERSONA_PROMPT}]
 
-        # 长期记忆：全部加载（limit=0 = 无限制）
-        memories = get_all_memories(limit=0)
+        # 长期记忆：按重要性取前 15 条
+        memories = get_all_memories(limit=15)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
@@ -103,7 +103,7 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆：最近 30 条（由 deque maxlen 保证不超额）
+        # 短期记忆：最近 15 条（由 deque maxlen 保证不超额）
         for role, text in _short_term.get(group_id, []):
             messages.append({"role": role, "content": text})
 

@@ -1,6 +1,6 @@
 [project]
 name = "Project_Kei"
-version = "1.7.4"
+version = "1.7.5"
 description = "Project Kei - QQ Bot"
 requires-python = ">=3.12"
 dependencies = [

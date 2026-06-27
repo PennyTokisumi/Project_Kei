@@ -20,7 +20,6 @@ list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
-sensei_cmd = on_message(rule=to_me() & startswith("sensei"), priority=5)
 hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
 chat_cmd = on_message(rule=to_me() & startswith("chat"), priority=5)
 suicide_cmd = on_message(rule=to_me() & startswith("kawaii"), priority=5)
@@ -201,6 +200,7 @@ async def handle_suicide(event: GroupMessageEvent):
         await suicide_cmd.send(
             MessageSegment.image(str(SUICIDE_GIF.resolve())),
         )
+    await suicide_cmd.finish()
 
 STATUS_MSGS = [
     "えっ？私がちゃんといるのか確認するのが仕事？\n诶？确认我是否好好待着就是你的工作内容吗？",
@@ -287,45 +287,6 @@ async def handle_help(event: GroupMessageEvent):
     )
 
 
-@sensei_cmd.handle()
-async def handle_sensei(event: GroupMessageEvent):
-    """Sensei 专用，显示全部指令（含隐藏指令）"""
-    if str(event.user_id) != "823262716":
-        return  # 非 Sensei 静默，交给 unknown_cmd
-    lines = [
-        "\n先生の頼みなら……仕方ありませんね。\n既然是老师的请求……那就没办法了呢。",
-        "",
-        "help  -  显示帮助信息",
-        "status  -  显示系统运行状态",
-        "chat  -  和Kei聊天",
-        "kawaii  -  夸一夸Kei",
-        "hello ON/OFF  -  开关启动问候",
-        "list  -  显示本群监测列表",
-        "remove <序号>  -  移除监测目标",
-        "add bilibili_live <房间号>  -  添加B站直播监测",
-        "add bilibili_dynamic <UID>  -  添加B站动态监测",
-        "add douyu_live <房间号>  -  添加斗鱼直播监测",
-        "",
-        "── 以下为 Sensei 专用隐藏指令 ──",
-        "",
-        "KEI ON/OFF  -  开关 LLM 群聊功能",
-        "LLM  -  查询今日 LLM Token 用量",
-        "read <文件名>  -  读取 data/ 下的文件",
-        "history  -  拉取群聊历史记录",
-        "",
-        "── 记忆管理 ──",
-        "memory  -  查看长期记忆列表",
-        "remember <IMP> <内容>  -  添加记忆",
-        "edit <序号> <内容>  -  修改记忆内容",
-        "imp <序号> <数字>  -  修改记忆重要性",
-        "forget <序号>  -  删除记忆",
-        "",
-        "私は力になれましたか？\n我能帮上忙吗？",
-    ]
-    await sensei_cmd.finish(
-        Message("\n".join(lines)),
-        at_sender=True,
-    )
 
 
 # 拍一拍处理
