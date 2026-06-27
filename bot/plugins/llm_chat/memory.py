@@ -6,7 +6,7 @@ from typing import Optional
 from .database import get_all_memories, save_memory, search_memory
 from .persona import PERSONA_PROMPT
 
-# {group_id: deque(maxlen=30)}
+# {group_id: deque(maxlen=30)}，元素为 (role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
@@ -23,13 +23,17 @@ class MemoryManager:
 
     @classmethod
     def add_message(cls, group_id: int, sender: str, content: str):
+        """记录用户消息"""
         if group_id not in _short_term:
             _short_term[group_id] = deque(maxlen=30)
-        _short_term[group_id].append(f"{sender}: {content}")
+        _short_term[group_id].append(("user", f"{sender}: {content}"))
 
     @classmethod
-    def get_short_term(cls, group_id: int) -> list[str]:
-        return list(_short_term.get(group_id, []))
+    def add_assistant_message(cls, group_id: int, content: str):
+        """记录 Kei 自己的回复"""
+        if group_id not in _short_term:
+            _short_term[group_id] = deque(maxlen=30)
+        _short_term[group_id].append(("assistant", content))
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -51,14 +55,14 @@ class MemoryManager:
         save_memory(content, importance)
 
     @classmethod
-    def recall(cls, query: str, limit: int = 5) -> list[str]:
-        """关键词检索记忆"""
-        return search_memory(query, limit)
+    def recall(cls, query: str, group_id: int = 0, limit: int = 8) -> list[str]:
+        """关键词检索记忆（当前群优先）"""
+        return search_memory(query, limit, group_id)
 
     @classmethod
-    def get_recent(cls, limit: int = 10) -> list[str]:
-        """获取最近的重要记忆"""
-        return get_all_memories(limit)
+    def get_recent(cls, group_id: int = 0, limit: int = 10) -> list[str]:
+        """获取最近的重要记忆（fallback 用，含全局）"""
+        return get_all_memories(limit, group_id)
 
     # ─── 上下文构建 ──────────────────────────────────
 
@@ -68,16 +72,18 @@ class MemoryManager:
         """构建发给 LLM 的完整 messages 数组"""
         messages = [{"role": "system", "content": PERSONA_PROMPT}]
 
-        # 长期记忆
-        memories = cls.get_recent(10)
+        # 长期记忆：直接取重要性最高的（当前群优先）
+        memories = cls.get_recent(group_id, 8)
         if memories:
-            mem_text = "【重要记忆】\n" + "\n".join(f"· {m}" for m in memories)
+            mem_text = (
+                "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
+                + "\n".join(f"· {m}" for m in memories)
+            )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆
-        recent = cls.get_short_term(group_id)
-        for msg in recent[-15:]:  # 最近 15 条
-            messages.append({"role": "user", "content": msg})
+        # 短期记忆（带角色区分）
+        for role, text in list(_short_term.get(group_id, []))[-10:]:
+            messages.append({"role": role, "content": text})
 
         # 当前消息
         messages.append({"role": "user", "content": f"{sender_name}: {current_msg}"})

@@ -6,7 +6,6 @@ import time
 
 from config import DB_PATH
 
-# 独立的数据库连接（线程本地）
 _llm_conn = threading.local()
 
 
@@ -24,11 +23,17 @@ def init_llm_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS llm_memory (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER DEFAULT 0,
             content TEXT NOT NULL,
             importance REAL DEFAULT 0.5,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # 兼容旧表
+    try:
+        conn.execute("ALTER TABLE llm_memory ADD COLUMN group_id INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS llm_token_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,48 +49,93 @@ def init_llm_db():
 
 # ─── 长期记忆 ────────────────────────────────────────
 
-def save_memory(content: str, importance: float = 0.5):
+def save_memory(content: str, importance: float = 0.5, group_id: int = 0):
     """保存长期记忆"""
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO llm_memory (content, importance) VALUES (?, ?)",
-        (content, importance),
+        "INSERT INTO llm_memory (group_id, content, importance) VALUES (?, ?, ?)",
+        (group_id, content, importance),
     )
     conn.commit()
 
 
-def search_memory(query: str, limit: int = 5) -> list[str]:
-    """简单关键词搜索长期记忆"""
+def search_memory(query: str, limit: int = 5, group_id: int = 0) -> list[str]:
+    """关键词搜索，优先当前群的记忆"""
     conn = _get_conn()
     words = query.split()
     if not words:
+        # 当前群优先
         rows = conn.execute(
-            "SELECT content FROM llm_memory ORDER BY importance DESC, id DESC LIMIT ?",
-            (limit,),
+            "SELECT content FROM llm_memory WHERE group_id=? "
+            "ORDER BY importance DESC, id DESC LIMIT ?",
+            (group_id, limit),
         ).fetchall()
+        # 不足则补充全局记忆
+        if len(rows) < limit:
+            rows += conn.execute(
+                "SELECT content FROM llm_memory WHERE group_id=0 AND id NOT IN "
+                "(SELECT id FROM llm_memory WHERE group_id=? LIMIT ?) "
+                "ORDER BY importance DESC, id DESC LIMIT ?",
+                (group_id, limit, limit - len(rows)),
+            ).fetchall()
     else:
         conditions = " OR ".join(["content LIKE ?" for _ in words])
         params = [f"%{w}%" for w in words]
+        # 优先匹配当前群
         rows = conn.execute(
-            f"SELECT content FROM llm_memory WHERE {conditions} "
+            f"SELECT content FROM llm_memory WHERE group_id=? AND ({conditions}) "
             f"ORDER BY importance DESC, id DESC LIMIT ?",
-            [*params, limit],
+            [group_id, *params, limit],
         ).fetchall()
+        if len(rows) < limit:
+            rows += conn.execute(
+                f"SELECT content FROM llm_memory WHERE group_id=0 AND ({conditions}) "
+                f"ORDER BY importance DESC, id DESC LIMIT ?",
+                [*params, limit - len(rows)],
+            ).fetchall()
     return [r["content"] for r in rows]
 
 
-def get_all_memories(limit: int = 20) -> list[str]:
-    """获取最近的重要记忆"""
+def get_all_memories(limit: int = 20, group_id: int = 0) -> list[str]:
+    """获取最近的重要记忆（可选按群过滤）"""
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT content FROM llm_memory ORDER BY importance DESC, id DESC LIMIT ?",
-        (limit,),
+        "SELECT content FROM llm_memory WHERE group_id IN (0, ?) "
+        "ORDER BY importance DESC, id DESC LIMIT ?",
+        (group_id, limit),
     ).fetchall()
     return [r["content"] for r in rows]
 
 
+def get_existing_memories() -> list[dict]:
+    """获取所有现有记忆（供去重用）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, group_id, content, importance FROM llm_memory"
+    ).fetchall()
+    return [{"id": r["id"], "group_id": r["group_id"],
+             "content": r["content"], "importance": r["importance"]} for r in rows]
+
+
+def update_memory(memory_id: int, content: str, importance: float):
+    """更新记忆内容和重要性"""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE llm_memory SET content=?, importance=? WHERE id=?",
+        (content, importance, memory_id),
+    )
+    conn.commit()
+
+
+def delete_memory_by_keyword(keyword: str):
+    """按关键词删除记忆"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM llm_memory WHERE content LIKE ?", (f"%{keyword}%",))
+    conn.commit()
+
+
 def cleanup_memory(max_count: int = 500):
-    """清理过旧记忆，保留最近 max_count 条"""
+    """清理过旧记忆"""
     conn = _get_conn()
     count = conn.execute("SELECT COUNT(*) FROM llm_memory").fetchone()[0]
     if count > max_count:

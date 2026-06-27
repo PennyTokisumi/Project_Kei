@@ -1,7 +1,7 @@
 [project]
 name = "Project_Kei"
-version = "1.6.9"
-description = "Project Kei - QQ Bot 监测推送"
+version = "1.7.0"
+description = "Project Kei - QQ Bot"
 requires-python = ">=3.12"
 dependencies = [
     "nonebot2[fast]>=2.4.0",

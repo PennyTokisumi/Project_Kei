@@ -30,11 +30,8 @@ kei_enable_cmd = on_message(rule=to_me() & startswith("KEI"), priority=5)
 @kei_enable_cmd.handle()
 async def handle_kei_enable(event: GroupMessageEvent):
     """开关 LLM 群聊功能（仅群主/管理员可用）"""
-    if event.sender.role not in ("owner", "admin"):
-        await kei_enable_cmd.finish(
-            Message("\n此功能仅群主和管理员可配置。"),
-            at_sender=True,
-        )
+    if str(event.user_id) != "823262716":
+        return  # 非 Sensei 静默，交给 unknown_cmd
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -97,11 +94,8 @@ llm_usage_cmd = on_message(rule=to_me() & startswith("LLM"), priority=5)
 @llm_usage_cmd.handle()
 async def handle_llm_usage(event: GroupMessageEvent):
     """查询今日 token 用量（仅群主/管理员可用）"""
-    if event.sender.role not in ("owner", "admin"):
-        await llm_usage_cmd.finish(
-            Message("\n此功能仅群主和管理员可查看。"),
-            at_sender=True,
-        )
+    if str(event.user_id) != "823262716":
+        return  # 非 Sensei 静默，交给 unknown_cmd
 
     usage = get_usage_today()
     # DeepSeek 定价（RMB / 1M tokens，按约 7.2 汇率）
@@ -124,6 +118,10 @@ async def handle_llm_usage(event: GroupMessageEvent):
     )
 
 
+# ─── 注册 history 指令 ─────────────────────────────────
+from . import history  # noqa: E402, F401
+
+
 # ─── @Kei LLM 回复（p6，仅 KEI ON 时触发）──────────────
 def _llm_on_rule(event: GroupMessageEvent) -> bool:
     if not event.group_id:
@@ -141,18 +139,56 @@ async def handle_llm_at(event: GroupMessageEvent):
     sender_name = extract_user_name(event)
 
     memory.add_message(gid, sender_name, msg_text)
-    msgs = memory.build_context(gid, msg_text, sender_name)
+
+    # 检测文件读取请求
+    file_content = None
+    read_filename = None
+    try:
+        from .file_reader import extract_filename, safe_read
+        read_filename = extract_filename(msg_text)
+        if read_filename:
+            file_content = safe_read(read_filename)
+    except Exception:
+        pass
+
+    if read_filename and not file_content:
+        msgs = memory.build_context(gid, msg_text, sender_name)
+        msgs.insert(0, {
+            "role": "system",
+            "content": f"用户要求读取文件 '{read_filename}'，但该文件不存在。请告知用户。"
+        })
+    elif file_content:
+        size_kb = len(file_content) // 1024
+        msgs = memory.build_context(gid, msg_text, sender_name)
+        msgs.insert(1, {
+            "role": "system",
+            "content": (
+                f"【用户要求读取文件: {read_filename}（{size_kb}KB）。请基于此文件内容回应。】\n"
+                f"──── 文件开始 ────\n"
+                f"{file_content[:8000]}\n"
+                f"──── 文件结束 ────"
+            )
+        })
+    else:
+        msgs = memory.build_context(gid, msg_text, sender_name)
     msgs.append({
         "role": "system",
         "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.7, max_tokens=256)
+    max_tok = 512 if file_content else 256
+    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=max_tok)
     reply = result.get("content", "").strip()
     if not reply:
         reply = "……"
+    memory.add_assistant_message(gid, reply)
     memory.mark_spoke(gid)
     await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
+    # 异步提取长期记忆（传入文件内容如果有）
+    from .remember import extract_and_save
+    import asyncio
+    asyncio.ensure_future(extract_and_save(sender_name, msg_text, reply, gid,
+                                           extra=file_content))
 
 
 # ─── 自由聊天监听 ────────────────────────────────────
@@ -193,7 +229,7 @@ async def handle_free_chat(event: GroupMessageEvent):
         "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.7, max_tokens=256)
+    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=512)
     reply = result.get("content", "").strip()
     if not reply:
         return
@@ -202,7 +238,13 @@ async def handle_free_chat(event: GroupMessageEvent):
         from nonebot import get_bot
         bot = get_bot()
         await bot.send_group_msg(group_id=group_id, message=Message(reply))
+        memory.add_assistant_message(group_id, reply)
         memory.mark_spoke(group_id)
+        # 异步提取长期记忆
+        from .remember import extract_and_save
+        import asyncio
+        asyncio.ensure_future(extract_and_save(sender_name, msg_text, reply, group_id,
+                                               extra=None))
     except Exception:
         pass
 
