@@ -298,3 +298,30 @@ def load_all_short_term_groups() -> dict[int, list[dict]]:
             "content": r["content"],
         })
     return result
+
+
+def load_short_term_global(limit: int = 15) -> list[dict]:
+    """加载全局最近 N 条短期对话（跨群，按时间正序返回）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT group_id, role, sender, content FROM llm_short_term "
+        "ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [{"group_id": r["group_id"], "role": r["role"],
+             "sender": r["sender"], "content": r["content"]}
+            for r in reversed(rows)]
+
+
+def cleanup_short_term_global(max_count: int = 15):
+    """全局只保留最近 max_count 条短期对话"""
+    conn = _get_conn()
+    count = conn.execute("SELECT COUNT(*) FROM llm_short_term").fetchone()[0]
+    if count > max_count:
+        excess = count - max_count
+        conn.execute(
+            "DELETE FROM llm_short_term WHERE id IN "
+            "(SELECT id FROM llm_short_term ORDER BY id ASC LIMIT ?)",
+            (excess,),
+        )
+        conn.commit()

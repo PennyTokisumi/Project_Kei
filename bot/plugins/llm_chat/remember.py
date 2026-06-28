@@ -67,7 +67,7 @@ async def extract_and_save(sender: str, user_msg: str, kei_reply: str,
 
     prompt = (
         f"发送者：{sender}\n"
-        "- QQ:823262716 = Sensei，每句话都记。称呼为 Sensei 不是用户\n"
+        "- QQ823262716 = Sensei，每句话都记。称呼为 Sensei 不是用户\n"
         "- 用户说「记住/记下」→ 必须提取\n\n"
         f"现有记忆:\n{mem_list}\n\n"
         f"{extra_text}"
