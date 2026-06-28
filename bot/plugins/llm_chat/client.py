@@ -43,13 +43,13 @@ class LLMClient:
         max_tokens: int = 512,
         tools: Optional[list[dict]] = None,
     ) -> dict:
-        """发送聊天请求，返回 {"content": str, "tool_calls": list|None, "usage": dict, "error": str|None}"""
+        """发送聊天请求"""
         if not self.available:
             return {"content": "", "error": "API Key 未配置", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
         payload: dict = {
             "model": self._model,
-            "messages": messages,
+            "messages": msgs,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,

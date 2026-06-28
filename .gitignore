@@ -32,3 +32,5 @@ Download/
 data/.pid
 .mem_diag.txt
 msg_debug.log
+reply_trace.log
+img_debug.log

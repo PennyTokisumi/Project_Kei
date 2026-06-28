@@ -21,6 +21,31 @@ def extract_text(event: GroupMessageEvent) -> str:
     return "".join(text_parts)
 
 
+def extract_images(event: GroupMessageEvent) -> list[str]:
+    """提取消息中的图片 URL 列表"""
+    urls = []
+    for seg in event.message:
+        if seg.type == "image":
+            url = seg.data.get("url", "")
+            if url:
+                urls.append(url)
+    return urls
+
+
+import re
+
+# 匹配中文括号（...）和英文括号 (...)，但保留 URL 和 QQ 号
+_PAREN_PATTERN = re.compile(r"[（(][^)）]*[)）]")
+
+
+def strip_action_parens(text: str) -> str:
+    """移除括号内的动作/心理描写，如（笑）（叹气）"""
+    text = _PAREN_PATTERN.sub("", text)
+    # 清理多余空格
+    text = re.sub(r" {2,}", " ", text)
+    return text.strip()
+
+
 def extract_user_name(event: GroupMessageEvent) -> str:
     """获取发送者标识（QQ 号在前，供 Kei 区分不同人）"""
     name = event.sender.card or event.sender.nickname or f"用户{event.user_id}"

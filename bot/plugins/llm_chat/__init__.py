@@ -21,7 +21,7 @@ from .database import get_usage_today, init_llm_db
 from .decision import should_speak
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name
+from .utils import extract_text, extract_user_name, strip_action_parens
 
 driver = get_driver()
 
@@ -422,13 +422,16 @@ async def handle_llm_at(event: GroupMessageEvent):
     msgs = memory.build_context(gid, msg_text, sender_name)
     msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
+        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理。如果当前消息不完整（对方可能还没打完、话只说了一半），返回空内容不要回复；如果消息完整，正常回复。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.6, max_tokens=256)
-    reply = result.get("content", "").strip()
+    result = await llm_client.chat(
+        messages=msgs, temperature=0.6, max_tokens=256,
+    )
+    reply = strip_action_parens(result.get("content", ""))
     if not reply:
-        reply = "……"
+        # LLM 判断消息不完整，不回复
+        return
     memory.add_assistant_message(gid, reply)
     memory.mark_spoke(gid)
     # 提取记忆
@@ -462,19 +465,20 @@ async def handle_free_chat(event: GroupMessageEvent):
     """自由聊天：无需 @Kei，AI 自主决定是否发言"""
     group_id = event.group_id
     msg_text = extract_text(event)
+    sender_name = extract_user_name(event)
+
     if not msg_text or len(msg_text) < 2:
         return
 
-    sender_name = extract_user_name(event)
     memory.add_message(group_id, sender_name, msg_text)
 
-    if not memory.can_speak(group_id):
+    # 提到 Kei → 无视冷却，必定回复
+    mentions_kei = bool(re.search(r"(?i)\bkei\b|ケイ|凯伊|kei", msg_text))
+
+    if not mentions_kei and not memory.can_speak(group_id):
         return
 
-    # 快速规则：Sensei 或提到 Kei → 必定回复
-    is_sensei = "823262716" in sender_name
-    mentions_kei = bool(re.search(r"(?i)\bkei\b|ケイ|凯伊|kei", msg_text))
-    if not is_sensei and not mentions_kei:
+    if not mentions_kei:
         should = await should_speak(group_id, msg_text, sender_name)
         if not should:
             return
@@ -482,11 +486,13 @@ async def handle_free_chat(event: GroupMessageEvent):
     msgs = memory.build_context(group_id, msg_text, sender_name)
     msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复（1-3 句，不输出代码块或 markdown）。"
+        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理。如果当前消息不完整（对方可能还没打完、话只说了一半），返回空内容不要回复；如果消息完整，正常回复。"
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.6, max_tokens=512)
-    reply = result.get("content", "").strip()
+    result = await llm_client.chat(
+        messages=msgs, temperature=0.6, max_tokens=512,
+    )
+    reply = strip_action_parens(result.get("content", ""))
     if not reply:
         return
 
