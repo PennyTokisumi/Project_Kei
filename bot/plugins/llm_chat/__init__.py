@@ -21,7 +21,7 @@ from .database import get_usage_today, init_llm_db
 from .decision import should_speak
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name, strip_action_parens
+from .utils import extract_text, extract_user_name
 
 driver = get_driver()
 
@@ -58,7 +58,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
         test_result = await llm_client.chat(
             messages=[{"role": "user", "content": "请回复OK"}],
             temperature=0.0,
-            max_tokens=128,
+            max_tokens=8,
         )
         if not test_result.get("content", "").strip():
             err = test_result.get("error", "")
@@ -175,9 +175,10 @@ async def handle_read(event: GroupMessageEvent):
                 json={
                     "model": config.deepseek_model,
                     "messages": [{"role": "user", "content": extract_prompt}],
-                    "max_tokens": 300,
+                    "max_tokens": 256,
                     "temperature": 0.2,
                     "stream": False,
+                    "thinking": {"type": "disabled"},
                 },
             )
             extract_text = r.json()["choices"][0]["message"]["content"]
@@ -419,22 +420,20 @@ async def handle_llm_at(event: GroupMessageEvent):
     sender_name = extract_user_name(event)
 
     memory.add_message(gid, sender_name, msg_text)
-    msgs = memory.build_context(gid, msg_text, sender_name)
-    msgs.append({
+    _msgs = memory.build_context(gid, msg_text, sender_name)
+    _msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理。如果当前消息不完整（对方可能还没打完、话只说了一半），返回空内容不要回复；如果消息完整，正常回复。"
+        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
     })
 
-    result = await llm_client.chat(
-        messages=msgs, temperature=0.6, max_tokens=256,
-    )
-    reply = strip_action_parens(result.get("content", ""))
+    result = await llm_client.chat(messages=_msgs, temperature=0.6, max_tokens=512)
+    reply = result.get("content", "").strip()
+
     if not reply:
-        # LLM 判断消息不完整，不回复
-        return
+        reply = "……"
     memory.add_assistant_message(gid, reply)
     memory.mark_spoke(gid)
-    # 提取记忆
+
     from .remember import extract_and_save
     try:
         await extract_and_save(sender_name, msg_text, reply)
@@ -467,13 +466,10 @@ async def handle_free_chat(event: GroupMessageEvent):
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
-    if not msg_text or len(msg_text) < 2:
-        return
-
     memory.add_message(group_id, sender_name, msg_text)
 
     # 提到 Kei → 无视冷却，必定回复
-    mentions_kei = bool(re.search(r"(?i)\bkei\b|ケイ|凯伊|kei", msg_text))
+    mentions_kei = bool(re.search(r"(?i)(?<![a-z])kei(?![a-z])|ケイ|凯伊", msg_text))
 
     if not mentions_kei and not memory.can_speak(group_id):
         return
@@ -486,13 +482,13 @@ async def handle_free_chat(event: GroupMessageEvent):
     msgs = memory.build_context(group_id, msg_text, sender_name)
     msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理。如果当前消息不完整（对方可能还没打完、话只说了一半），返回空内容不要回复；如果消息完整，正常回复。"
+        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
     })
 
     result = await llm_client.chat(
         messages=msgs, temperature=0.6, max_tokens=512,
     )
-    reply = strip_action_parens(result.get("content", ""))
+    reply = result.get("content", "").strip()
     if not reply:
         return
 

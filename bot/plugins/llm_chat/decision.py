@@ -8,22 +8,25 @@ async def should_speak(group_id: int, current_msg: str,
                        sender_name: str = "某人") -> bool:
     """由 LLM 决定是否应该回复（1-5 打分，≥3 则发言）"""
     msgs = memory.build_context(group_id, current_msg, sender_name)
+    # 移除 Kei 人格消息 + 长期记忆（避免角色扮演）
+    msgs = [m for m in msgs if m["role"] != "assistant"]
+    msgs = [m for m in msgs if "长期记忆" not in m.get("content", "")]
+    # 只保留群标识 + 最近对话
     if len(msgs) > 8:
-        msgs = msgs[:1] + msgs[-6:]
+        msgs = [msgs[1]] + msgs[-7:]  # 群标识 + 最近 7 条
 
     msgs.append({
         "role": "system",
         "content": (
-            "给「你应该加入这个话题回复」打分（1-5）。\n"
-            "- Sensei（QQ823262716）发言 → 保底 2 分\n"
-            "- 话题你感兴趣 → 4~5\n"
-            "- 普通闲聊 → 2~3\n"
-            "- 完全无关 → 1\n"
-            "只回复一个数字。"
-        )
+            "你是分析助手，不是 Kei。给最后一条消息的回复必要性打分。\n"
+            "基础分：明确跟 Kei 说话 → 3 | 不确定/自言自语 → 2 | 跟其他人聊 → 1\n"
+            "加分：发言者是 QQ823262716 → +1 | Kei 感兴趣的话题 → +1\n"
+            "减分：Kei 完全不感兴趣的话题 → -1\n"
+            "最终分 ≥3 才需要 Kei 回复。只回复最终分数。"
+        ).format(current_msg=current_msg)
     })
 
-    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=4)
+    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=256, enable_thinking=True, thinking_effort="high")
     content = result.get("content", "").strip()
 
     import re

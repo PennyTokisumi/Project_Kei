@@ -20,7 +20,7 @@ _short_term: deque = deque(maxlen=15)
 _last_speak_time: dict[int, float] = {}
 
 # 冷却时间（秒），避免刷屏
-COOLDOWN_SECONDS = 3
+COOLDOWN_SECONDS = 1
 
 
 class MemoryManager:
@@ -88,10 +88,14 @@ class MemoryManager:
         """构建发给 LLM 的完整 messages 数组"""
         messages = [{"role": "system", "content": PERSONA_PROMPT}]
 
-        # 当前群标识（内部标记，不在聊天记录中出现，不会泄露到回复）
+        # 当前群标识 + 时间
+        import time as _t3
+        from datetime import datetime, timezone, timedelta
+        _tz = timezone(timedelta(hours=8))
+        _now = datetime.now(_tz).strftime("%Y-%m-%d %H:%M:%S")
         messages.append({
             "role": "system",
-            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。请以 Kei 的身份自然回复，不要输出群号。"
+            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。请以 Kei 的身份自然回复，不要输出群号。"
         })
 
         # 长期记忆：按重要性取前 15 条

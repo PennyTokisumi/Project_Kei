@@ -42,18 +42,24 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 512,
         tools: Optional[list[dict]] = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "low",
     ) -> dict:
-        """发送聊天请求"""
+        """发送聊天请求。enable_thinking=True 时开启推理，thinking_effort 控制推理等级。"""
         if not self.available:
             return {"content": "", "error": "API Key 未配置", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}
 
         payload: dict = {
             "model": self._model,
-            "messages": msgs,
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if enable_thinking:
+            payload["reasoning_effort"] = thinking_effort
+        else:
+            payload["thinking"] = {"type": "disabled"}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"

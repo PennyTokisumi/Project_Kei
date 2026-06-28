@@ -7,7 +7,7 @@ from config import config as _cfg
 from .database import save_memory, update_memory, cleanup_memory, get_existing_memories
 
 
-async def _extract_call(prompt: str, max_tokens: int = 300) -> str:
+async def _extract_call(prompt: str, max_tokens: int = 256) -> str:
     try:
         async with httpx.AsyncClient(timeout=30) as http:
             r = await http.post(
@@ -22,6 +22,7 @@ async def _extract_call(prompt: str, max_tokens: int = 300) -> str:
                     "max_tokens": max_tokens,
                     "temperature": 0.2,
                     "stream": False,
+                    "thinking": {"type": "disabled"},
                 },
             )
             return r.json()["choices"][0]["message"]["content"]
@@ -78,7 +79,7 @@ async def extract_and_save(sender: str, user_msg: str, kei_reply: str,
         "只输出 JSON。"
     )
 
-    raw = await _extract_call(prompt, max_tokens=300)
+    raw = await _extract_call(prompt, max_tokens=256)
     content = raw.strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[-1]
