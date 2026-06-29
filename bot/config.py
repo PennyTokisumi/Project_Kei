@@ -52,8 +52,8 @@ class Config(BaseSettings):
 
     @property
     def chat_temperature(self) -> float:
-        """供应商默认温度：DS=0.5, Gemini=0.8"""
-        return 0.8 if self.llm_provider == "gemini" else 0.5
+        """供应商默认温度：统一 0.7"""
+        return 0.7
 
     @property
     def is_gemini(self) -> bool:

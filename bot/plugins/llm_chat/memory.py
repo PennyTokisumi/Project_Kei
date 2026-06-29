@@ -15,7 +15,7 @@ from .database import (
 from config import config
 from .persona import PERSONA_PROMPT_DS, PERSONA_PROMPT_GM
 
-# {group_id: deque(maxlen=10)}，元素为 (ev_time, role, text)
+# {group_id: deque(maxlen=20)}，元素为 (ev_time, role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
@@ -30,14 +30,15 @@ _last_process_time: dict[int, float] = {}
 
 
 def _insert_sorted(dq: deque, item: tuple):
-    """按 ev_time 升序插入，保持时间顺序"""
+    """按 ev_time 升序插入，保持时间顺序；超 maxlen 时淘汰最旧的"""
     t = item[0]
     for i, existing in enumerate(dq):
         if t < existing[0]:
             dq.insert(i, item)
-            break
-    else:
-        dq.append(item)
+            if len(dq) > dq.maxlen:
+                dq.popleft()
+            return
+    dq.append(item)  # append 自动遵守 maxlen
 
 
 class MemoryManager:
@@ -56,7 +57,7 @@ class MemoryManager:
     def add_message(cls, group_id: int, sender: str, content: str, ev_time: int = 0):
         """记录用户消息（按群，按事件时间排序插入）"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=10)
+            _short_term[group_id] = deque(maxlen=20)
         _insert_sorted(_short_term[group_id], (ev_time, "user", f"{sender}: {content}"))
 
     @classmethod
@@ -64,7 +65,7 @@ class MemoryManager:
         """记录 Kei 自己的回复（用当前时间排序）"""
         import time as _time
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=10)
+            _short_term[group_id] = deque(maxlen=20)
         _insert_sorted(_short_term[group_id], (int(_time.time()), "assistant", content))
 
     @classmethod
@@ -137,6 +138,12 @@ class MemoryManager:
         short.sort(key=lambda x: x[0])
         for _, role, text in short:
             messages.append({"role": role, "content": text})
+
+        # 调试 dump
+        import time as _td; from config import DATA_DIR; _d = DATA_DIR
+        _ctx = [f"[{m['role']}] {m['content'][:100]}" for m in messages]
+        with open(_d / "ctx_dump.log", "a", encoding="utf-8") as _f:
+            _f.write(f"\n=== {_td.strftime('%H:%M:%S')} ===\n" + "\n".join(_ctx) + "\n")
 
         return messages
 
