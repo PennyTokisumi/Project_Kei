@@ -1,33 +1,20 @@
 """LLM Chat 插件 — 长期记忆自动提取与去重"""
 
 import json
-import httpx
 
 from config import config as _cfg
+from .client import llm_client
 from .database import save_memory, update_memory, cleanup_memory, get_existing_memories
 
 
 async def _extract_call(prompt: str, max_tokens: int = 256) -> str:
-    try:
-        async with httpx.AsyncClient(timeout=30) as http:
-            r = await http.post(
-                "https://api.deepseek.com/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {_cfg.deepseek_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": _cfg.deepseek_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                    "temperature": 0.2,
-                    "stream": False,
-                    "thinking": {"type": "disabled"},
-                },
-            )
-            return r.json()["choices"][0]["message"]["content"]
-    except Exception:
-        return ""
+    result = await llm_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_tokens=max_tokens,
+        enable_thinking=False,
+    )
+    return result.get("content", "")
 
 
 def _token_overlap(a: str, b: str) -> float:
@@ -56,7 +43,7 @@ async def extract_and_save(sender: str, user_msg: str, kei_reply: str,
     """从对话中提取值得记住的信息并保存"""
     from nonebot import logger as _log
 
-    if not _cfg.deepseek_api_key:
+    if not _cfg.llm_api_key:
         return
 
     existing = get_existing_memories()

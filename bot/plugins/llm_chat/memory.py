@@ -12,9 +12,10 @@ from .database import (
     cleanup_short_term,
     load_all_short_term_groups,
 )
-from .persona import PERSONA_PROMPT
+from config import config
+from .persona import PERSONA_PROMPT_DS, PERSONA_PROMPT_GM
 
-# {group_id: deque(maxlen=5)}，元素为 (role, text)
+# {group_id: deque(maxlen=3)}，元素为 (role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
@@ -34,7 +35,7 @@ class MemoryManager:
         """从数据库恢复各群短期记忆"""
         all_groups = load_all_short_term_groups()
         for gid, msgs in all_groups.items():
-            dq = deque(maxlen=5)
+            dq = deque(maxlen=3)
             for m in msgs:
                 if m["role"] == "user":
                     dq.append(("user", f"{m['sender']}: {m['content']}"))
@@ -46,16 +47,16 @@ class MemoryManager:
     def add_message(cls, group_id: int, sender: str, content: str):
         """记录用户消息（按群）"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=5)
+            _short_term[group_id] = deque(maxlen=3)
         _short_term[group_id].append(("user", f"{sender}: {content}"))
         save_short_term(group_id, "user", sender, content)
-        cleanup_short_term(group_id, 5)
+        cleanup_short_term(group_id, 3)
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
         """记录 Kei 自己的回复（仅持久化，不占记忆槽）"""
         save_short_term(group_id, "assistant", "", content)
-        cleanup_short_term(group_id, 5)
+        cleanup_short_term(group_id, 3)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -72,7 +73,7 @@ class MemoryManager:
     # ─── 长期记忆 ────────────────────────────────────
 
     @classmethod
-    def remember(cls, content: str, importance: float = 0.5):
+    def remember(cls, content: str, importance: float = 0.3):
         """AI 主动记忆"""
         save_memory(content, importance)
 
@@ -87,7 +88,8 @@ class MemoryManager:
     def build_context(cls, group_id: int, current_msg: str,
                       sender_name: str = "某人") -> list[dict]:
         """构建发给 LLM 的完整 messages 数组"""
-        messages = [{"role": "system", "content": PERSONA_PROMPT}]
+        prompt = PERSONA_PROMPT_GM if config.is_gemini else PERSONA_PROMPT_DS
+        messages = [{"role": "system", "content": prompt}]
 
         # 当前群标识 + 时间
         import time as _t3
@@ -99,8 +101,8 @@ class MemoryManager:
             "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。请以 Kei 的身份自然回复，不要输出群号。"
         })
 
-        # 长期记忆：按重要性取前 30 条
-        memories = get_all_memories(limit=30)
+        # 长期记忆：按重要性取前 20 条
+        memories = get_all_memories(limit=20)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"

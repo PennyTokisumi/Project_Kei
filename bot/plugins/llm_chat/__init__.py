@@ -54,7 +54,8 @@ async def handle_kei_enable(event: GroupMessageEvent):
             )
 
         # 连通性测试：发一条简单请求确认 API Key 有效
-        await kei_enable_cmd.send(Message("正在验证 DeepSeek API 连接..."))
+        provider = config.llm_provider.upper()
+        await kei_enable_cmd.send(Message(f"正在验证 {provider} API 连接..."))
         test_result = await llm_client.chat(
             messages=[{"role": "user", "content": "请回复OK"}],
             temperature=0.0,
@@ -63,7 +64,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
         if not test_result.get("content", "").strip():
             err = test_result.get("error", "")
             await kei_enable_cmd.finish(
-                Message(f"\n❌ DeepSeek API 连接失败。"
+                Message(f"\n❌ {provider} API 连接失败。"
                         "\n请检查 API Key 和网络。未开启 LLM 功能。"),
                 at_sender=True,
             )
@@ -151,8 +152,7 @@ async def handle_read(event: GroupMessageEvent):
     size_kb = len(content) // 1024
     await read_cmd.send(Message(f"已读取 {filename}（{size_kb}KB），正在分析..."))
 
-    # 1. 专用提取：裸 HTTP，不开 reasoning_effort，避免 token 被推理吃光
-    import httpx
+    # 1. 提取文件中的长期记忆
     extract_prompt = (
         "从以下文件内容中提取所有值得长期记住的信息。\n"
         "每条信息一行，格式: 内容 | 重要性(0.4-1.0)\n"
@@ -163,27 +163,13 @@ async def handle_read(event: GroupMessageEvent):
         "Sensei喜欢喝可乐 | 0.6\n"
         "只输出内容，不要其他文字。"
     )
-    extract_text = ""
-    try:
-        async with httpx.AsyncClient(timeout=30) as http:
-            r = await http.post(
-                "https://api.deepseek.com/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {config.deepseek_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": config.deepseek_model,
-                    "messages": [{"role": "user", "content": extract_prompt}],
-                    "max_tokens": 256,
-                    "temperature": 0.2,
-                    "stream": False,
-                    "thinking": {"type": "disabled"},
-                },
-            )
-            extract_text = r.json()["choices"][0]["message"]["content"]
-    except Exception:
-        pass
+    result = await llm_client.chat(
+        messages=[{"role": "user", "content": extract_prompt}],
+        temperature=0.2,
+        max_tokens=256,
+        enable_thinking=False,
+    )
+    extract_text = result.get("content", "")
 
     from .database import save_memory, cleanup_memory
     for line in extract_text.split("\n"):
@@ -426,7 +412,7 @@ async def handle_llm_at(event: GroupMessageEvent):
         "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
     })
 
-    result = await llm_client.chat(messages=_msgs, temperature=0.6, max_tokens=512)
+    result = await llm_client.chat(messages=_msgs, max_tokens=512)
     reply = result.get("content", "").strip()
 
     if not reply:
@@ -486,7 +472,7 @@ async def handle_free_chat(event: GroupMessageEvent):
     })
 
     result = await llm_client.chat(
-        messages=msgs, temperature=0.6, max_tokens=512,
+        messages=msgs, max_tokens=512,
     )
     reply = result.get("content", "").strip()
     if not reply:
@@ -520,6 +506,10 @@ _greeting_sent = False
 async def _llm_startup():
     init_llm_db()
     memory.load_from_db()
+    # 启动时关闭所有群的 LLM 开关，需手动 KEI ON
+    from ..monitor.database import get_conn as _mon_conn
+    _mon_conn().execute("UPDATE settings SET value='0' WHERE key LIKE 'llm_enabled_%'")
+    _mon_conn().commit()
     if llm_client.available:
         from nonebot import logger as nb_logger
         nb_logger.info("LLM Chat 插件已就绪")

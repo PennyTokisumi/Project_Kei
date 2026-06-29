@@ -29,8 +29,35 @@ class Config(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # LLM
+    llm_provider: str = Field(default="deepseek", description="LLM 供应商: deepseek / gemini")
     deepseek_api_key: str = Field(default="", description="DeepSeek API Key")
     deepseek_model: str = Field(default="deepseek-v4-flash", description="DeepSeek 模型名")
+    gemini_api_key: str = Field(default="", description="Gemini API Key")
+    gemini_model: str = Field(default="gemini-2.5-flash", description="Gemini 模型名")
+    llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
+
+    @property
+    def llm_api_key(self) -> str:
+        return self.gemini_api_key if self.llm_provider == "gemini" else self.deepseek_api_key
+
+    @property
+    def llm_model(self) -> str:
+        return self.gemini_model if self.llm_provider == "gemini" else self.deepseek_model
+
+    @property
+    def llm_base_url(self) -> str:
+        if self.llm_provider == "gemini":
+            return "https://generativelanguage.googleapis.com/v1beta/openai"
+        return "https://api.deepseek.com"
+
+    @property
+    def chat_temperature(self) -> float:
+        """供应商默认温度：DS=0.5, Gemini=0.8"""
+        return 0.8 if self.llm_provider == "gemini" else 0.5
+
+    @property
+    def is_gemini(self) -> bool:
+        return self.llm_provider == "gemini"
 
     model_config = {
         "env_file": str(Path(__file__).resolve().parent / ".env"),
