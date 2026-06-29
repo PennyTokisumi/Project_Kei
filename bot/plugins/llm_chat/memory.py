@@ -15,14 +15,29 @@ from .database import (
 from config import config
 from .persona import PERSONA_PROMPT_DS, PERSONA_PROMPT_GM
 
-# {group_id: deque(maxlen=3)}，元素为 (role, text)
+# {group_id: deque(maxlen=10)}，元素为 (ev_time, role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
 _last_speak_time: dict[int, float] = {}
 
 # 冷却时间（秒），避免刷屏
-COOLDOWN_SECONDS = 1
+COOLDOWN_SECONDS = 3
+
+# 批次处理间隔（秒）：所有消息 3s 集中评估一次
+BATCH_INTERVAL = 3
+_last_process_time: dict[int, float] = {}
+
+
+def _insert_sorted(dq: deque, item: tuple):
+    """按 ev_time 升序插入，保持时间顺序"""
+    t = item[0]
+    for i, existing in enumerate(dq):
+        if t < existing[0]:
+            dq.insert(i, item)
+            break
+    else:
+        dq.append(item)
 
 
 class MemoryManager:
@@ -32,31 +47,25 @@ class MemoryManager:
 
     @classmethod
     def load_from_db(cls):
-        """从数据库恢复各群短期记忆"""
-        all_groups = load_all_short_term_groups()
-        for gid, msgs in all_groups.items():
-            dq = deque(maxlen=3)
-            for m in msgs:
-                if m["role"] == "user":
-                    dq.append(("user", f"{m['sender']}: {m['content']}"))
-            _short_term[gid] = dq
+        """启动时不从 DB 恢复短期记忆（DB 已关闭）"""
+        pass
 
     # ─── 短期记忆 ────────────────────────────────────
 
     @classmethod
-    def add_message(cls, group_id: int, sender: str, content: str):
-        """记录用户消息（按群）"""
+    def add_message(cls, group_id: int, sender: str, content: str, ev_time: int = 0):
+        """记录用户消息（按群，按事件时间排序插入）"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=3)
-        _short_term[group_id].append(("user", f"{sender}: {content}"))
-        save_short_term(group_id, "user", sender, content)
-        cleanup_short_term(group_id, 3)
+            _short_term[group_id] = deque(maxlen=10)
+        _insert_sorted(_short_term[group_id], (ev_time, "user", f"{sender}: {content}"))
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
-        """记录 Kei 自己的回复（仅持久化，不占记忆槽）"""
-        save_short_term(group_id, "assistant", "", content)
-        cleanup_short_term(group_id, 3)
+        """记录 Kei 自己的回复（用当前时间排序）"""
+        import time as _time
+        if group_id not in _short_term:
+            _short_term[group_id] = deque(maxlen=10)
+        _insert_sorted(_short_term[group_id], (int(_time.time()), "assistant", content))
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -66,6 +75,18 @@ class MemoryManager:
         return (time.time() - last) >= COOLDOWN_SECONDS
 
     @classmethod
+    def can_process(cls, group_id: int) -> bool:
+        """消息处理间隔：距上次处理 ≥5s 才允许 LLM 评估"""
+        import time
+        last = _last_process_time.get(group_id, 0)
+        return (time.time() - last) >= BATCH_INTERVAL
+
+    @classmethod
+    def mark_processed(cls, group_id: int):
+        import time
+        _last_process_time[group_id] = time.time()
+
+    @classmethod
     def mark_spoke(cls, group_id: int):
         import time
         _last_speak_time[group_id] = time.time()
@@ -73,7 +94,7 @@ class MemoryManager:
     # ─── 长期记忆 ────────────────────────────────────
 
     @classmethod
-    def remember(cls, content: str, importance: float = 0.3):
+    def remember(cls, content: str, importance: float = 0.5):
         """AI 主动记忆"""
         save_memory(content, importance)
 
@@ -86,19 +107,18 @@ class MemoryManager:
 
     @classmethod
     def build_context(cls, group_id: int, current_msg: str,
-                      sender_name: str = "某人") -> list[dict]:
+                      sender_name: str = "某人",
+                      ev_time: int = 9999999999) -> list[dict]:
         """构建发给 LLM 的完整 messages 数组"""
         prompt = PERSONA_PROMPT_GM if config.is_gemini else PERSONA_PROMPT_DS
         messages = [{"role": "system", "content": prompt}]
 
         # 当前群标识 + 时间
-        import time as _t3
         from datetime import datetime, timezone, timedelta
-        _tz = timezone(timedelta(hours=8))
-        _now = datetime.now(_tz).strftime("%Y-%m-%d %H:%M:%S")
+        _now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
         messages.append({
             "role": "system",
-            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。请以 Kei 的身份自然回复，不要输出群号。"
+            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。角色为 assistant 的消息是你自己发出的。消息按时间排序，最后一条（无时间戳）是最新消息。请以 Kei 的身份自然回复，不要输出群号。"
         })
 
         # 长期记忆：按重要性取前 20 条
@@ -110,17 +130,13 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆：取本群最近消息，排除最后一条（当前消息）
+        # 短期记忆（按事件时间排序，含当前消息）
         short = list(_short_term.get(group_id, []))
-        if short:
-            short = short[:-1]
-        for role, text in short:
+        cur_entry = (ev_time, "user", f"{sender_name}: {current_msg}")
+        short.append(cur_entry)
+        short.sort(key=lambda x: x[0])
+        for _, role, text in short:
             messages.append({"role": role, "content": text})
-
-        # 当前消息
-        messages.append(
-            {"role": "user", "content": f"{sender_name}: {current_msg}"}
-        )
 
         return messages
 

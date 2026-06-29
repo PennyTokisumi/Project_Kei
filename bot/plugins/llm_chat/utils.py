@@ -36,3 +36,5 @@ def extract_user_name(event: GroupMessageEvent) -> str:
     """获取发送者标识（QQ 号在前，供 Kei 区分不同人）"""
     name = event.sender.card or event.sender.nickname or f"用户{event.user_id}"
     return f"QQ{event.user_id}({name})"
+
+

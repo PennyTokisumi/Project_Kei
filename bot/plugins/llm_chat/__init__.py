@@ -25,6 +25,18 @@ from .utils import extract_text, extract_user_name
 
 driver = get_driver()
 
+# ─── 消息去重（防止 NapCat 重复推送）─────────────────
+_SEEN_MSG_IDS: set[int] = set()
+
+def _is_dup(event: GroupMessageEvent) -> bool:
+    msg_id = event.message_id
+    if msg_id in _SEEN_MSG_IDS:
+        return True
+    _SEEN_MSG_IDS.add(msg_id)
+    if len(_SEEN_MSG_IDS) > 200:
+        _SEEN_MSG_IDS.clear()
+    return False
+
 # ─── 命令：KEI ON/OFF ────────────────────────────────
 kei_enable_cmd = on_message(rule=to_me() & startswith("KEI"), priority=5)
 
@@ -401,12 +413,16 @@ llm_at_handler = on_message(rule=to_me() & Rule(_llm_on_rule), priority=6, block
 @llm_at_handler.handle()
 async def handle_llm_at(event: GroupMessageEvent):
     """@Kei 消息在 KEI ON 的群 → LLM 自然回复"""
+    if _is_dup(event):
+        return
     gid = event.group_id
-    msg_text = extract_text(event)
+    raw_text = extract_text(event)
+    reply_ctx, msg_text = parse_reply_text(raw_text)
+    msg_text = reply_ctx + msg_text
     sender_name = extract_user_name(event)
 
-    memory.add_message(gid, sender_name, msg_text)
-    _msgs = memory.build_context(gid, msg_text, sender_name)
+    _msgs = memory.build_context(gid, msg_text, sender_name, event.time)
+    memory.add_message(gid, sender_name, msg_text, event.time)
     _msgs.append({
         "role": "system",
         "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
@@ -446,26 +462,35 @@ free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
 
 
 @free_chat.handle()
-async def handle_free_chat(event: GroupMessageEvent):
+async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     """自由聊天：无需 @Kei，AI 自主决定是否发言"""
+    if _is_dup(event):
+        return
     group_id = event.group_id
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
-    memory.add_message(group_id, sender_name, msg_text)
-
-    # 提到 Kei → 无视冷却，必定回复
+    # 提到 Kei → 无视发言冷却，但仍遵守批次间隔
     mentions_kei = bool(re.search(r"(?i)(?<![a-z])kei(?![a-z])|ケイ|凯伊", msg_text))
 
     if not mentions_kei and not memory.can_speak(group_id):
+        memory.add_message(group_id, sender_name, msg_text, event.time)
         return
+
+    # 全局批次间隔：5s 内所有消息（含提到 Kei）只写入记忆，不做 LLM 评估
+    if not memory.can_process(group_id):
+        memory.add_message(group_id, sender_name, msg_text, event.time)
+        return
+    memory.mark_processed(group_id)
 
     if not mentions_kei:
         should = await should_speak(group_id, msg_text, sender_name)
         if not should:
+            memory.add_message(group_id, sender_name, msg_text, event.time)
             return
 
-    msgs = memory.build_context(group_id, msg_text, sender_name)
+    msgs = memory.build_context(group_id, msg_text, sender_name, event.time)
+    memory.add_message(group_id, sender_name, msg_text, event.time)
     msgs.append({
         "role": "system",
         "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
@@ -479,8 +504,6 @@ async def handle_free_chat(event: GroupMessageEvent):
         return
 
     try:
-        from nonebot import get_bot
-        bot = get_bot()
         await bot.send_group_msg(group_id=group_id, message=Message(reply))
         memory.add_assistant_message(group_id, reply)
         memory.mark_spoke(group_id)
