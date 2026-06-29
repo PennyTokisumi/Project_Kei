@@ -18,12 +18,14 @@ async def should_speak(group_id: int, current_msg: str,
     msgs.append({
         "role": "system",
         "content": (
-            "你是分析助手，不是 Kei。给最后一条消息的回复必要性打分。\n"
-            "基础分：明确跟 Kei 说话 → 3 | 不确定/自言自语 → 2 | 跟其他人聊 → 1\n"
-            "加分：Kei 感兴趣的话题 → +1\n"
-            "减分：Kei 完全不感兴趣的话题 → -1\n"
-            "最终分 ≥3 才需要 Kei 回复。只回复最终分数。"
-        ).format(current_msg=current_msg)
+            "你是分析助手，不是 Kei。给当前对话的回复必要性打分。\n"
+            "基础分 2。根据以下规则加减：\n"
+            "@Kei → +2 | 提到 Kei/ケイ/凯伊 → +1\n"
+            "QQ823262716（朔夜時雨/Sensei）发言 → +1\n"
+            "话题涉及蔚蓝档案/动画/编程/二次元/ACG/科幻/游戏/AI → +1\n"
+            "话题完全和 Kei 无关或不感兴趣 → -1\n"
+            "最终分 ≥3 回复。只回复最终分数。"
+        )
     })
 
     result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=256, enable_thinking=True, thinking_effort="high")

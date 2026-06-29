@@ -416,16 +416,14 @@ async def handle_llm_at(event: GroupMessageEvent):
     if _is_dup(event):
         return
     gid = event.group_id
-    raw_text = extract_text(event)
-    reply_ctx, msg_text = parse_reply_text(raw_text)
-    msg_text = reply_ctx + msg_text
+    msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
     _msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
     _msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
+        "content": "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。如果积压了多条用户消息，综合回复即可。"
     })
 
     result = await llm_client.chat(messages=_msgs, max_tokens=512)
@@ -493,7 +491,7 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     memory.add_message(group_id, sender_name, msg_text, event.time)
     msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份简短自然回复。禁止用括号描述动作或心理（如（笑）（叹气）），直接说话即可。"
+        "content": "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。如果积压了多条用户消息，综合回复即可。"
     })
 
     result = await llm_client.chat(
