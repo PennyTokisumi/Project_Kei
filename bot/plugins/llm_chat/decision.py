@@ -20,7 +20,7 @@ async def should_speak(group_id: int, current_msg: str,
         "content": (
             "你是分析助手，不是 Kei。给最后一条消息的回复必要性打分。\n"
             "基础分：明确跟 Kei 说话 → 3 | 不确定/自言自语 → 2 | 跟其他人聊 → 1\n"
-            "加分：发言者是 QQ823262716 → +1 | Kei 感兴趣的话题 → +1\n"
+            "加分：Kei 感兴趣的话题 → +1\n"
             "减分：Kei 完全不感兴趣的话题 → -1\n"
             "最终分 ≥3 才需要 Kei 回复。只回复最终分数。"
         ).format(current_msg=current_msg)

@@ -1,4 +1,4 @@
-"""LLM Chat 插件 — 记忆管理（全局短期记忆）"""
+"""LLM Chat 插件 — 记忆管理"""
 
 from collections import deque
 from typing import Optional
@@ -8,13 +8,14 @@ from .database import (
     save_memory,
     search_memory,
     save_short_term,
-    cleanup_short_term_global,
-    load_short_term_global,
+    load_short_term,
+    cleanup_short_term,
+    load_all_short_term_groups,
 )
 from .persona import PERSONA_PROMPT
 
-# 全局短期记忆（跨群共享），元素为 (role, text)
-_short_term: deque = deque(maxlen=15)
+# {group_id: deque(maxlen=5)}，元素为 (role, text)
+_short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
 _last_speak_time: dict[int, float] = {}
@@ -30,31 +31,31 @@ class MemoryManager:
 
     @classmethod
     def load_from_db(cls):
-        """从数据库恢复全局短期记忆"""
-        rows = load_short_term_global(limit=15)
-        for r in rows:
-            if r["role"] == "user":
-                _short_term.append(
-                    ("user", f"{r['sender']}: {r['content']}")
-                )
-            else:
-                _short_term.append(("assistant", r["content"]))
+        """从数据库恢复各群短期记忆"""
+        all_groups = load_all_short_term_groups()
+        for gid, msgs in all_groups.items():
+            dq = deque(maxlen=5)
+            for m in msgs:
+                if m["role"] == "user":
+                    dq.append(("user", f"{m['sender']}: {m['content']}"))
+            _short_term[gid] = dq
 
     # ─── 短期记忆 ────────────────────────────────────
 
     @classmethod
     def add_message(cls, group_id: int, sender: str, content: str):
-        """记录用户消息（全局）"""
-        _short_term.append(("user", f"{sender}: {content}"))
+        """记录用户消息（按群）"""
+        if group_id not in _short_term:
+            _short_term[group_id] = deque(maxlen=5)
+        _short_term[group_id].append(("user", f"{sender}: {content}"))
         save_short_term(group_id, "user", sender, content)
-        cleanup_short_term_global(15)
+        cleanup_short_term(group_id, 5)
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
-        """记录 Kei 自己的回复"""
-        _short_term.append(("assistant", content))
+        """记录 Kei 自己的回复（仅持久化，不占记忆槽）"""
         save_short_term(group_id, "assistant", "", content)
-        cleanup_short_term_global(15)
+        cleanup_short_term(group_id, 5)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -98,8 +99,8 @@ class MemoryManager:
             "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。请以 Kei 的身份自然回复，不要输出群号。"
         })
 
-        # 长期记忆：按重要性取前 15 条
-        memories = get_all_memories(limit=15)
+        # 长期记忆：按重要性取前 30 条
+        memories = get_all_memories(limit=30)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
@@ -107,10 +108,10 @@ class MemoryManager:
             )
             messages.append({"role": "system", "content": mem_text})
 
-        # 短期记忆：取最近消息，排除最后一条（当前消息，后面单独追加）
-        short = list(_short_term)
+        # 短期记忆：取本群最近消息，排除最后一条（当前消息）
+        short = list(_short_term.get(group_id, []))
         if short:
-            short = short[:-1]  # 去掉末尾（当前消息，已由 add_message 提前写入）
+            short = short[:-1]
         for role, text in short:
             messages.append({"role": role, "content": text})
 
