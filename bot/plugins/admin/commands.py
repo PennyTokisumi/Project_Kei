@@ -15,10 +15,10 @@ from ..monitor.database import (
 from ..monitor.scheduler import reload_targets
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
+status_cmd = on_message(rule=to_me() & startswith("status"), priority=3)
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
 list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
-status_cmd = on_message(rule=to_me() & startswith("status"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
 hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
 chat_cmd = on_message(rule=to_me() & startswith("chat"), priority=5)

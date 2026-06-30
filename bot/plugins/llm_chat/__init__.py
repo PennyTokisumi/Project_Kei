@@ -37,15 +37,59 @@ def _is_dup(event: GroupMessageEvent) -> bool:
         _SEEN_MSG_IDS.clear()
     return False
 
-# ─── 命令：KEI ON/OFF ────────────────────────────────
-kei_enable_cmd = on_message(rule=to_me() & startswith("KEI"), priority=5)
 
+# ══════════════════════════════════════════════════════
+#  命令规则（按优先级排列）
+# ══════════════════════════════════════════════════════
+
+# ─── P4：Sensei 专用指令 ─────────────────────────────
+
+kei_enable_cmd  = on_message(rule=to_me() & startswith("KEI"),      priority=4)
+llm_usage_cmd   = on_message(rule=to_me() & startswith("LLM"),      priority=4)
+read_cmd        = on_message(rule=to_me() & startswith("read"),     priority=4)
+memory_cmd      = on_message(rule=to_me() & startswith("memory"),   priority=4)
+addmem_cmd      = on_message(rule=to_me() & startswith("remember"), priority=4)
+edit_cmd        = on_message(rule=to_me() & startswith("edit"),     priority=4)
+imp_cmd         = on_message(rule=to_me() & startswith("imp"),      priority=4)
+forget_cmd      = on_message(rule=to_me() & startswith("forget"),   priority=4)
+sensei_cmd      = on_message(rule=to_me() & startswith("sensei"),   priority=4)
+history_cmd     = on_message(rule=to_me() & startswith("history"),  priority=4)
+
+# ─── P6：@Kei LLM 自然回复 ───────────────────────────
+
+def _llm_on_rule(event: GroupMessageEvent) -> bool:
+    if not event.group_id:
+        return False
+    if event.user_id == event.self_id:
+        return False
+    return get_setting(f"llm_enabled_{event.group_id}", "0") == "1"
+
+llm_at_handler = on_message(rule=to_me() & Rule(_llm_on_rule), priority=6, block=True)
+
+# ─── P10：自由聊天监听 ───────────────────────────────
+
+def _no_at_rule(event: GroupMessageEvent) -> bool:
+    if not event.group_id:
+        return False
+    if event.user_id == event.self_id:
+        return False
+    for seg in event.message:
+        if seg.type == "at" and seg.data.get("qq") == str(event.self_id):
+            return False
+    return True
+
+free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
+
+
+# ══════════════════════════════════════════════════════
+#  KEI ON/OFF
+# ══════════════════════════════════════════════════════
 
 @kei_enable_cmd.handle()
 async def handle_kei_enable(event: GroupMessageEvent):
-    """开关 LLM 群聊功能（仅群主/管理员可用）"""
+    """开关 LLM 群聊功能（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return  # 非 Sensei 静默，交给 unknown_cmd
+        return
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -65,7 +109,6 @@ async def handle_kei_enable(event: GroupMessageEvent):
                 at_sender=True,
             )
 
-        # 连通性测试：发一条简单请求确认 API Key 有效
         provider = config.llm_provider.upper()
         await kei_enable_cmd.send(Message(f"正在验证 {provider} API 连接..."))
         test_result = await llm_client.chat(
@@ -74,7 +117,6 @@ async def handle_kei_enable(event: GroupMessageEvent):
             max_tokens=8,
         )
         if not test_result.get("content", "").strip():
-            err = test_result.get("error", "")
             await kei_enable_cmd.finish(
                 Message(f"\n❌ {provider} API 连接失败。"
                         "\n请检查 API Key 和网络。未开启 LLM 功能。"),
@@ -100,15 +142,15 @@ async def handle_kei_enable(event: GroupMessageEvent):
         )
 
 
-# ─── 命令：LLM ────────────────────────────────────────
-llm_usage_cmd = on_message(rule=to_me() & startswith("LLM"), priority=5)
-
+# ══════════════════════════════════════════════════════
+#  LLM — 查询 Token 用量
+# ══════════════════════════════════════════════════════
 
 @llm_usage_cmd.handle()
 async def handle_llm_usage(event: GroupMessageEvent):
-    """查询今日 token 用量（仅群主/管理员可用）"""
+    """查询今日 token 用量（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return  # 非 Sensei 静默，交给 unknown_cmd
+        return
 
     from .database import get_usage_yesterday, get_usage_total
     today = get_usage_today()
@@ -138,9 +180,9 @@ async def handle_llm_usage(event: GroupMessageEvent):
     )
 
 
-# ─── read 指令 ────────────────────────────────────────
-read_cmd = on_message(rule=to_me() & startswith("read"), priority=5)
-
+# ══════════════════════════════════════════════════════
+#  read — 读取文件
+# ══════════════════════════════════════════════════════
 
 @read_cmd.handle()
 async def handle_read(event: GroupMessageEvent):
@@ -215,9 +257,9 @@ async def handle_read(event: GroupMessageEvent):
     memory.mark_spoke(event.group_id)
 
 
-# ─── memory 指令 ──────────────────────────────────────
-memory_cmd = on_message(rule=to_me() & startswith("memory"), priority=5)
-
+# ══════════════════════════════════════════════════════
+#  memory / remember / edit / imp / forget — 记忆管理
+# ══════════════════════════════════════════════════════
 
 @memory_cmd.handle()
 async def handle_memory(event: GroupMessageEvent):
@@ -236,10 +278,6 @@ async def handle_memory(event: GroupMessageEvent):
         lines.append(f"  [{m['id']}] imp={m['importance']:.1f}")
         lines.append(f"      {m['content']}")
     await memory_cmd.finish(Message("\n".join(lines)))
-
-
-# ─── remember 指令 ─────────────────────────────────────
-addmem_cmd = on_message(rule=to_me() & startswith("remember"), priority=5)
 
 
 @addmem_cmd.handle()
@@ -266,10 +304,6 @@ async def handle_addmem(event: GroupMessageEvent):
     await addmem_cmd.finish(Message(f"记忆已添加。imp={imp:.1f}"))
 
 
-# ─── edit 指令 ────────────────────────────────────────
-edit_cmd = on_message(rule=to_me() & startswith("edit"), priority=5)
-
-
 @edit_cmd.handle()
 async def handle_edit(event: GroupMessageEvent):
     """edit <id> <内容> — 修改记忆内容（仅 Sensei）"""
@@ -277,7 +311,7 @@ async def handle_edit(event: GroupMessageEvent):
         return
 
     text = event.get_plaintext().strip()
-    parts = text.split(None, 2)  # edit, id, content
+    parts = text.split(None, 2)
     if len(parts) < 3 or not parts[1].isdigit():
         await edit_cmd.finish(Message("格式: edit <序号> <新内容>"))
         return
@@ -292,10 +326,6 @@ async def handle_edit(event: GroupMessageEvent):
 
     update_memory_content(mid, new_content)
     await edit_cmd.finish(Message(f"记忆 [{mid}] 已更新。"))
-
-
-# ─── imp 指令 ─────────────────────────────────────────
-imp_cmd = on_message(rule=to_me() & startswith("imp"), priority=5)
 
 
 @imp_cmd.handle()
@@ -327,10 +357,6 @@ async def handle_imp(event: GroupMessageEvent):
     await imp_cmd.finish(Message(f"记忆 [{mid}] 重要性已更新为 {new_imp}。"))
 
 
-# ─── forget 指令 ──────────────────────────────────────
-forget_cmd = on_message(rule=to_me() & startswith("forget"), priority=5)
-
-
 @forget_cmd.handle()
 async def handle_forget(event: GroupMessageEvent):
     """forget <id> — 删除记忆（仅 Sensei）"""
@@ -349,9 +375,9 @@ async def handle_forget(event: GroupMessageEvent):
     await forget_cmd.finish(Message(f"记忆 [{mid}] 已删除。"))
 
 
-# ─── sensei 指令 ──────────────────────────────────────
-sensei_cmd = on_message(rule=to_me() & startswith("sensei"), priority=5)
-
+# ══════════════════════════════════════════════════════
+#  sensei — 显示全部指令
+# ══════════════════════════════════════════════════════
 
 @sensei_cmd.handle()
 async def handle_sensei(event: GroupMessageEvent):
@@ -394,21 +420,90 @@ async def handle_sensei(event: GroupMessageEvent):
     )
 
 
-# ─── 注册 history 指令 ─────────────────────────────────
-from . import history  # noqa: E402, F401
+# ══════════════════════════════════════════════════════
+#  history — 拉取群聊历史
+# ══════════════════════════════════════════════════════
+
+from pathlib import Path as _Path
+from datetime import datetime as _datetime
+from config import DATA_DIR as _DATA_DIR
+
+_CHATLOG_DIR = _DATA_DIR / "chatlogs"
 
 
-# ─── @Kei LLM 回复（p6，仅 KEI ON 时触发）──────────────
-def _llm_on_rule(event: GroupMessageEvent) -> bool:
-    if not event.group_id:
-        return False
-    # 忽略 bot 自己的消息，防止自循环
-    if event.user_id == event.self_id:
-        return False
-    return get_setting(f"llm_enabled_{event.group_id}", "0") == "1"
+async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
+                           message_seq: int = 0) -> tuple[int, str]:
+    """拉取历史消息并保存为 txt"""
+    _CHATLOG_DIR.mkdir(parents=True, exist_ok=True)
 
-llm_at_handler = on_message(rule=to_me() & Rule(_llm_on_rule), priority=6, block=True)
+    result = await bot.call_api(
+        "get_group_msg_history",
+        group_id=group_id,
+        count=count,
+        message_seq=message_seq,
+    )
 
+    messages = result.get("messages", [])
+    if not messages:
+        return 0, ""
+
+    timestamp = _datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"chatlog_{group_id}_{timestamp}.txt"
+    filepath = _CHATLOG_DIR / filename
+
+    lines = []
+    for msg in messages:
+        t = _datetime.fromtimestamp(msg.get("time", 0)).strftime("%m-%d %H:%M")
+        sender = msg.get("sender", {})
+        nickname = sender.get("nickname", "") or sender.get("card", "") or str(sender.get("user_id", "?"))
+        user_id = sender.get("user_id", "")
+        message_list = msg.get("message", [])
+        text_parts = []
+        for seg in message_list:
+            if seg.get("type") == "text":
+                text_parts.append(seg.get("data", {}).get("text", ""))
+            elif seg.get("type") == "image":
+                text_parts.append("[图片]")
+        content = "".join(text_parts)
+        if content.strip():
+            lines.append(f"[{t}] {nickname}({user_id}): {content}")
+
+    filepath.write_text("\n".join(lines), encoding="utf-8")
+    return len(lines), str(filepath)
+
+
+@history_cmd.handle()
+async def handle_history(event: GroupMessageEvent, bot: Bot):
+    """@Kei history — 拉取历史消息并保存"""
+    if str(event.user_id) != "823262716":
+        return
+
+    text = event.get_plaintext().strip()
+    parts = text.split()
+    msg_count = 100
+    if len(parts) >= 2 and parts[1].isdigit():
+        msg_count = min(int(parts[1]), 500)
+
+    await history_cmd.send(Message(f"正在拉取 {msg_count} 条历史消息..."))
+    count = 0
+    path = ""
+    error_msg = None
+    try:
+        count, path = await _fetch_and_save(bot, event.group_id, count=msg_count)
+    except Exception as e:
+        error_msg = str(e)
+
+    if error_msg:
+        await history_cmd.finish(Message(f"\n拉取失败: {error_msg}"))
+    elif count == 0:
+        await history_cmd.finish(Message("\n未拉取到历史消息。"))
+    else:
+        await history_cmd.finish(Message(f"已保存 {count} 条消息到:\n{path}"))
+
+
+# ══════════════════════════════════════════════════════
+#  @Kei LLM 回复
+# ══════════════════════════════════════════════════════
 
 @llm_at_handler.handle()
 async def handle_llm_at(event: GroupMessageEvent):
@@ -442,22 +537,9 @@ async def handle_llm_at(event: GroupMessageEvent):
     await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
 
 
-# ─── 自由聊天监听 ────────────────────────────────────
-# 仅处理「不含 @Kei 的群消息」，由 LLM 自主决定是否插话
-def _no_at_rule(event: GroupMessageEvent) -> bool:
-    """消息不含 @Kei，且非 bot 自身消息"""
-    if not event.group_id:
-        return False
-    # 忽略 bot 自己的消息，防止自循环
-    if event.user_id == event.self_id:
-        return False
-    for seg in event.message:
-        if seg.type == "at" and seg.data.get("qq") == str(event.self_id):
-            return False
-    return True
-
-free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
-
+# ══════════════════════════════════════════════════════
+#  自由聊天监听
+# ══════════════════════════════════════════════════════
 
 @free_chat.handle()
 async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
@@ -468,14 +550,12 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
-    # 提到 Kei → 无视发言冷却，但仍遵守批次间隔
     mentions_kei = bool(re.search(r"(?i)(?<![a-z])kei(?![a-z])|ケイ|凯伊", msg_text))
 
     if not mentions_kei and not memory.can_speak(group_id):
         memory.add_message(group_id, sender_name, msg_text, event.time)
         return
 
-    # 全局批次间隔：5s 内所有消息（含提到 Kei）只写入记忆，不做 LLM 评估
     if not memory.can_process(group_id):
         memory.add_message(group_id, sender_name, msg_text, event.time)
         return
@@ -494,9 +574,7 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
         "content": "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。如果积压了多条用户消息，综合回复即可。"
     })
 
-    result = await llm_client.chat(
-        messages=msgs, max_tokens=512,
-    )
+    result = await llm_client.chat(messages=msgs, max_tokens=512)
     reply = result.get("content", "").strip()
     if not reply:
         return
@@ -505,14 +583,15 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
         await bot.send_group_msg(group_id=group_id, message=Message(reply))
         memory.add_assistant_message(group_id, reply)
         memory.mark_spoke(group_id)
-        # 异步提取长期记忆
         from .remember import extract_and_save
         await extract_and_save(sender_name, msg_text, reply)
     except Exception:
         pass
 
 
-# ─── 生命周期 ────────────────────────────────────────
+# ══════════════════════════════════════════════════════
+#  生命周期
+# ══════════════════════════════════════════════════════
 
 LLM_READY_MSG = (
     "先生、教えてください。\n老师，请告诉我。\n"
@@ -527,7 +606,6 @@ _greeting_sent = False
 async def _llm_startup():
     init_llm_db()
     memory.load_from_db()
-    # 启动时关闭所有群的 LLM 开关，需手动 KEI ON
     from ..monitor.database import get_conn as _mon_conn
     _mon_conn().execute("UPDATE settings SET value='0' WHERE key LIKE 'llm_enabled_%'")
     _mon_conn().commit()
@@ -549,7 +627,6 @@ async def _llm_on_connect(bot: Bot):
 
     from .database import get_all_memories
     if not get_all_memories(limit=1):
-        # 向第一个启用的群发送提示
         from ..monitor.database import list_targets
         all_targets = list_targets()
         group_ids = {t["group_id"] for t in all_targets}
