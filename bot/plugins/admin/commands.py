@@ -305,7 +305,7 @@ async def handle_poke(event: PokeNotifyEvent):
         from nonebot import get_bot
         bot = get_bot()
         await bot.call_api(
-            "send_poke",
+            "group_poke",
             group_id=event.group_id,
             user_id=event.user_id,
         )
