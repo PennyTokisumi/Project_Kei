@@ -223,25 +223,57 @@ class TrayIcon:
 # ─── 进程管理 ──────────────────────────────────────────────────
 
 def _kill_snowluma():
-    """杀掉 SnowLuma 所有相关进程（按命令行匹配 snowluma / SnowLuma 关键字）"""
-    try:
-        # 用 wmic 查找命令行含 snowluma 的进程 PID
-        out = subprocess.run(
-            'wmic process where "commandline like \'%%snowluma%%\' or commandline like \'%%SnowLuma%%\'" get processid /format:csv',
-            shell=True, capture_output=True, text=True, timeout=10,
-        ).stdout
-        for line in out.strip().splitlines():
-            parts = line.split(",")
-            for p in parts:
-                p = p.strip()
-                if p.isdigit():
+    """杀掉 SnowLuma 及其相关进程（cmd + node）"""
+    killed = set()
+
+    def _kill_by_port(port):
+        """通过监听端口反查 PID 并终止"""
+        try:
+            out = subprocess.run(
+                f'netstat -ano | findstr /C:LISTENING | findstr ":{port} "',
+                shell=True, capture_output=True, text=True, timeout=10,
+            ).stdout
+            for line in out.strip().splitlines():
+                parts = line.strip().split()
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) not in killed:
                     try:
-                        os.kill(int(p), signal.SIGTERM)
-                        logger.info(f"已终止 SnowLuma 进程 PID={p}")
+                        os.kill(int(pid), signal.SIGTERM)
+                        killed.add(int(pid))
+                        logger.info(f"已终止 SnowLuma 进程 PID={pid} (port {port})")
                     except Exception:
                         pass
-    except Exception as e:
-        logger.warning(f"终止 SnowLuma 失败: {e}")
+        except Exception as e:
+            logger.warning(f"端口查杀失败 (port {port}): {e}")
+
+    def _kill_by_keyword(keyword):
+        """通过命令行关键字匹配杀进程"""
+        try:
+            out = subprocess.run(
+                f'wmic process where "commandline like \'%%{keyword}%%\'" get processid /format:csv',
+                shell=True, capture_output=True, text=True, timeout=10,
+            ).stdout
+            for line in out.strip().splitlines():
+                parts = line.split(",")
+                for p in parts:
+                    p = p.strip()
+                    if p.isdigit() and int(p) not in killed:
+                        try:
+                            os.kill(int(p), signal.SIGTERM)
+                            killed.add(int(p))
+                            logger.info(f"已终止 SnowLuma 进程 PID={p} (keyword: {keyword})")
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"关键字查杀失败 (keyword: {keyword}): {e}")
+
+    # 1) 通过 SnowLuma 端口杀 node.exe 主体 (WebUI 5099/5100 + OneBot WS 8080)
+    for port in (5099, 5100, 5101, 8080):
+        _kill_by_port(port)
+
+    # 2) 通过命令行关键字杀 cmd 父进程
+    for kw in ("snowluma", "SnowLuma"):
+        _kill_by_keyword(kw)
 
 
 # 全局单例
