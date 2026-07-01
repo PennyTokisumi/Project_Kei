@@ -13,7 +13,7 @@ class Config(BaseSettings):
 
     # NoneBot 驱动
     driver: str = Field(default="~fastapi+~websockets")
-    onebot_ws_hosts: list[dict] = Field(default=[{"host": "127.0.0.1", "port": 8080}])
+    onebot_ws_hosts: list[dict] = Field(default=[{"host": "127.0.0.1", "port": 8080, "access_token": ""}])
 
     # 监测
     poll_interval: int = Field(default=30, description="轮询间隔（秒）")
@@ -62,6 +62,7 @@ class Config(BaseSettings):
     model_config = {
         "env_file": str(Path(__file__).resolve().parent / ".env"),
         "env_file_encoding": "utf-8",
+        "extra": "ignore",  # 忽略 NoneBot2 自身需要的 env 变量（如 PORT、HOST）
     }
 
 

@@ -17,6 +17,13 @@ if not exist "%ROOT%snowluma\launcher.bat" (
     exit /b 1
 )
 
+:: 检查是否已在运行（避免重复启动）
+wmic process where "commandline like '%%snowluma%%'" get processid 2>nul | findstr /r "[0-9]" >nul
+if %errorlevel% equ 0 (
+    echo   [SKIP] SnowLuma 已在运行
+    goto snowluma_done
+)
+
 :: 生成隐藏启动 VBS
 set "VBS=%TEMP%\sl_hidden.vbs"
 (echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%ROOT%snowluma"" && launcher.bat", 0, False) > "%VBS%"
@@ -27,6 +34,9 @@ echo   [OK] SnowLuma 已启动（后台）
 :: 自动打开 WebUI
 echo   打开管理面板 ...
 start http://127.0.0.1:5099
+REM SnowLuma 若 5099 被占用会自动用 5100，可在控制台确认实际端口
+
+:snowluma_done
 
 :: ===== 2. NoneBot =====
 echo [2/2] 启动 NoneBot ...
