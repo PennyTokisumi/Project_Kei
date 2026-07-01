@@ -295,9 +295,11 @@ poke_handler = on_notice()
 
 @poke_handler.handle()
 async def handle_poke(event: PokeNotifyEvent):
-    """群内被拍一拍时回复"""
+    """群内 Kei 被拍一拍时回复"""
     if not event.group_id:
         return
+    if str(event.target_id) != str(event.self_id):
+        return  # 拍的别人，不回复
     await poke_handler.finish(
         Message(f"{MessageSegment.at(event.user_id)}\n{random.choice(UNKNOWN_MSGS)}"),
     )
