@@ -295,11 +295,18 @@ poke_handler = on_notice()
 
 @poke_handler.handle()
 async def handle_poke(event: PokeNotifyEvent):
-    """群内 Kei 被拍一拍时回复"""
+    """群内 Kei 被拍一拍时回拍 + 回复"""
     if not event.group_id:
         return
     if str(event.target_id) != str(event.self_id):
         return  # 拍的别人，不回复
+    # 先回拍
+    try:
+        await poke_handler.send(
+            Message(MessageSegment("poke", {"qq": str(event.user_id)}))
+        )
+    except Exception:
+        pass  # 回拍失败不阻断
     await poke_handler.finish(
         Message(f"{MessageSegment.at(event.user_id)}\n{random.choice(UNKNOWN_MSGS)}"),
     )
