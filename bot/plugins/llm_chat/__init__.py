@@ -25,7 +25,7 @@ from .utils import extract_text, extract_user_name
 
 driver = get_driver()
 
-# ─── 消息去重（防止 NapCat 重复推送）─────────────────
+# ─── 消息去重（防止重复推送）──────────────────────────
 _SEEN_MSG_IDS: set[int] = set()
 
 def _is_dup(event: GroupMessageEvent) -> bool:
