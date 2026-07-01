@@ -17,6 +17,9 @@ bot/data/
 # NapCatQQ（QQ 客户端，不提交到 git）
 napcat/
 
+# SnowLuma（协议框架，不提交到 git）
+snowluma/
+
 # 聊天日志
 data/chatlogs/
 data/*.txt

@@ -216,18 +216,18 @@ class TrayIcon:
             icon.stop()
         except Exception:
             pass
-        _kill_napcat()
+        _kill_snowluma()
         os._exit(0)
 
 
 # ─── 进程管理 ──────────────────────────────────────────────────
 
-def _kill_napcat():
-    """杀掉 NapCatQQ 所有相关进程（按命令行匹配 napcat 关键字）"""
+def _kill_snowluma():
+    """杀掉 SnowLuma 所有相关进程（按命令行匹配 snowluma / SnowLuma 关键字）"""
     try:
-        # 用 wmic 查找命令行含 napcat 的进程 PID
+        # 用 wmic 查找命令行含 snowluma 的进程 PID
         out = subprocess.run(
-            'wmic process where "commandline like \'%%napcat%%\'" get processid /format:csv',
+            'wmic process where "commandline like \'%%snowluma%%\' or commandline like \'%%SnowLuma%%\'" get processid /format:csv',
             shell=True, capture_output=True, text=True, timeout=10,
         ).stdout
         for line in out.strip().splitlines():
@@ -237,11 +237,11 @@ def _kill_napcat():
                 if p.isdigit():
                     try:
                         os.kill(int(p), signal.SIGTERM)
-                        logger.info(f"已终止 NapCat 进程 PID={p}")
+                        logger.info(f"已终止 SnowLuma 进程 PID={p}")
                     except Exception:
                         pass
     except Exception as e:
-        logger.warning(f"终止 NapCat 失败: {e}")
+        logger.warning(f"终止 SnowLuma 失败: {e}")
 
 
 # 全局单例

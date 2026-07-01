@@ -9,25 +9,24 @@ echo   Project Kei
 echo =============================================
 echo.
 
-:: ===== 1. NapCat =====
-echo [1/2] 启动 NapCatQQ ...
-for /d %%i in ("%ROOT%napcat\NapCat.*.Shell") do set "NC=%%i"
-if not defined NC (
-    echo   [ERR] 未找到 NapCat 目录
+:: ===== 1. SnowLuma =====
+echo [1/2] 启动 SnowLuma ...
+if not exist "%ROOT%snowluma\launcher.bat" (
+    echo   [ERR] 未找到 SnowLuma，请解压 SnowLuma 到 snowluma 目录
     pause
     exit /b 1
 )
 
 :: 生成隐藏启动 VBS
-set "VBS=%TEMP%\nc_hidden.vbs"
-(echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%NC%"" && napcat.bat", 0, False) > "%VBS%"
+set "VBS=%TEMP%\sl_hidden.vbs"
+(echo CreateObject("WScript.Shell"^).Run "cmd /c cd /d ""%ROOT%snowluma"" && launcher.bat", 0, False) > "%VBS%"
 cscript //nologo "%VBS%"
 del "%VBS%"
-echo   [OK] NapCatQQ 已启动（后台）
+echo   [OK] SnowLuma 已启动（后台）
 
 :: 自动打开 WebUI
 echo   打开管理面板 ...
-start http://127.0.0.1:6099/webui/
+start http://127.0.0.1:5099
 
 :: ===== 2. NoneBot =====
 echo [2/2] 启动 NoneBot ...
