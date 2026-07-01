@@ -302,8 +302,12 @@ async def handle_poke(event: PokeNotifyEvent):
         return  # 拍的别人，不回复
     # 先回拍
     try:
-        await poke_handler.send(
-            Message(MessageSegment("poke", {"qq": str(event.user_id)}))
+        from nonebot import get_bot
+        bot = get_bot()
+        await bot.call_api(
+            "send_poke",
+            group_id=event.group_id,
+            user_id=event.user_id,
         )
     except Exception:
         pass  # 回拍失败不阻断
