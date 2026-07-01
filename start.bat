@@ -17,8 +17,8 @@ if not exist "%ROOT%snowluma\launcher.bat" (
     exit /b 1
 )
 
-:: 检查 SnowLuma 是否已在运行（通过 WebUI 端口 5099/5100）
-netstat -ano 2>nul | findstr /C:"LISTENING" | findstr /C:":5099 " /C:":5100 " >nul
+:: 检查 SnowLuma 是否已在运行（通过 WebUI 端口 5100/5099）
+netstat -ano 2>nul | findstr /C:"LISTENING" | findstr /C:":5100 " /C:":5099 " >nul
 if %errorlevel% equ 0 (
     echo   [SKIP] SnowLuma 已在运行
     goto snowluma_done
@@ -31,12 +31,12 @@ cscript //nologo "%VBS%"
 del "%VBS%"
 echo   [OK] SnowLuma 已启动（后台）
 
-:: 自动打开 WebUI（5099 优先，其次 5100）
+:: 自动打开 WebUI（5100 优先，其次 5099）
 echo   打开管理面板 ...
-netstat -ano 2>nul | findstr /C:":5099 " | findstr /C:"LISTENING" >nul && (
-    start http://127.0.0.1:5099
-) || (
+netstat -ano 2>nul | findstr /C:":5100 " | findstr /C:"LISTENING" >nul && (
     start http://127.0.0.1:5100
+) || (
+    start http://127.0.0.1:5099
 )
 
 :snowluma_done
