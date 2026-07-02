@@ -13,7 +13,7 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                     resp = await bot.call_api("get_msg", message_id=int(msg_id))
                     # 原发送者
                     sender = resp.get("sender", {}) or {}
-                    sender_name = sender.get("nickname", "") or sender.get("card", "") or f\"QQ{sender.get('user_id','')}\"
+                    sender_name = sender.get("nickname", "") or sender.get("card", "") or f"QQ{sender.get('user_id','')}"
 
                     msg = resp.get("message", "")
                     text = ""
@@ -37,7 +37,7 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                         text = msg
 
                     if sender_name and text:
-                        return f\"{sender_name}: {text}\"
+                        return f"{sender_name}: {text}"
                     return text or ""
                 except Exception:
                     pass
