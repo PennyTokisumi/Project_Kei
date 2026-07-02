@@ -4,14 +4,19 @@ from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
 
 async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
-    """获取被回复消息的文本内容。bot 为 None 时仅返回提示占位。"""
+    """获取被回复消息的发送者名和文本内容，返回格式: \"原发送者: 原消息\"。bot 为 None 时返回空。"""
     for seg in event.message:
         if seg.type == "reply":
             msg_id = seg.data.get("id", "")
             if msg_id and bot is not None:
                 try:
                     resp = await bot.call_api("get_msg", message_id=int(msg_id))
+                    # 原发送者
+                    sender = resp.get("sender", {}) or {}
+                    sender_name = sender.get("nickname", "") or sender.get("card", "") or f\"QQ{sender.get('user_id','')}\"
+
                     msg = resp.get("message", "")
+                    text = ""
                     if isinstance(msg, list):
                         parts = []
                         for s in msg:
@@ -27,9 +32,13 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                                 parts.append("[表情]")
                             else:
                                 parts.append(f"[{t}]")
-                        return "".join(parts)
+                        text = "".join(parts)
                     elif isinstance(msg, str):
-                        return msg
+                        text = msg
+
+                    if sender_name and text:
+                        return f\"{sender_name}: {text}\"
+                    return text or ""
                 except Exception:
                     pass
     return ""
