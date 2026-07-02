@@ -24,9 +24,6 @@ _last_speak_time: dict[int, float] = {}
 # 冷却时间（秒），避免刷屏
 COOLDOWN_SECONDS = 3
 
-# 批次处理间隔（秒）：所有消息 3s 集中评估一次
-BATCH_INTERVAL = 3
-_last_process_time: dict[int, float] = {}
 
 
 def _insert_sorted(dq: deque, item: tuple):
@@ -74,18 +71,6 @@ class MemoryManager:
         import time
         last = _last_speak_time.get(group_id, 0)
         return (time.time() - last) >= COOLDOWN_SECONDS
-
-    @classmethod
-    def can_process(cls, group_id: int) -> bool:
-        """消息处理间隔：距上次处理 ≥5s 才允许 LLM 评估"""
-        import time
-        last = _last_process_time.get(group_id, 0)
-        return (time.time() - last) >= BATCH_INTERVAL
-
-    @classmethod
-    def mark_processed(cls, group_id: int):
-        import time
-        _last_process_time[group_id] = time.time()
 
     @classmethod
     def mark_spoke(cls, group_id: int):

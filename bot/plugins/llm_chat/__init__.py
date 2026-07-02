@@ -7,7 +7,8 @@
 - 自由聊天监听 — 启用后，无需 @Kei，AI 主动判断是否加入聊天
 """
 
-import re
+import asyncio
+import time as _time
 
 from nonebot import get_driver, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
@@ -18,7 +19,7 @@ from ..monitor.database import get_setting, set_setting
 
 from .client import llm_client
 from .database import get_usage_today, init_llm_db
-from .decision import should_speak
+
 from .memory import memory
 from .persona import PERSONA_PROMPT
 from .utils import extract_text, extract_user_name, get_reply_text
@@ -36,6 +37,135 @@ def _is_dup(event: GroupMessageEvent) -> bool:
     if len(_SEEN_MSG_IDS) > 200:
         _SEEN_MSG_IDS.clear()
     return False
+
+
+# ─── 消息缓冲区（P10 自由聊天批量处理）─────────────────
+
+_buffer: dict[int, list[dict]] = {}          # group_id → [{sender_name, msg_text, ev_time}]
+_buffer_first_ts: dict[int, float] = {}       # 首条消息进入时间
+_buffer_tasks: dict[int, asyncio.Task] = {}
+_buffer_version: dict[int, int] = {}           # 版本号，防竞态
+IDLE_TIMEOUT = 3.0   # 空闲超时：最后一条消息后 3s 无新消息 → 刷新
+MAX_WAIT = 5.0       # 硬上限：第一条消息进入后 5s → 强制刷新
+MAX_BATCH = 8        # 数量上限：堆积 ≥ 8 条 → 立即刷新
+
+
+def _should_flush(gid: int) -> bool:
+    """检查是否满足立即刷新条件（数量上限 / 硬上限）"""
+    if gid not in _buffer or not _buffer[gid]:
+        return False
+    if len(_buffer[gid]) >= MAX_BATCH:
+        return True
+    elapsed = _time.time() - _buffer_first_ts.get(gid, _time.time())
+    return elapsed >= MAX_WAIT
+
+
+async def _flush_buffer(gid: int, bot: Bot, version: int):
+    """批量刷新缓冲区，发给 Kei 自行判断"""
+    last_should_false = _time.time()
+
+    while True:
+        await asyncio.sleep(0.5)
+
+        # 版本过期 → 退出（新版 task 已接管）
+        if _buffer_version.get(gid, 0) != version:
+            return
+
+        if _should_flush(gid):
+            break
+        if _buffer_first_ts.get(gid) is None:
+            return
+        now = _time.time()
+        if not _should_flush(gid):
+            if now - last_should_false >= IDLE_TIMEOUT:
+                break
+        else:
+            last_should_false = now
+
+    # 再次检查版本（防窄窗口竞态：version check → pop 之间新版 task 被创建）
+    if _buffer_version.get(gid, 0) != version:
+        return
+
+    # 取出缓冲消息
+    msgs = _buffer.pop(gid, [])
+    _buffer_first_ts.pop(gid, None)
+    _buffer_tasks.pop(gid, None)
+
+    if not msgs:
+        return
+
+    # 冷却检查
+    if not memory.can_speak(gid):
+        # 仍写入短期记忆（消息确实发生了）
+        for m in msgs:
+            memory.add_message(gid, m["sender_name"], m["msg_text"], m["ev_time"])
+        return
+
+    # 批量写入短期记忆
+    for m in msgs:
+        memory.add_message(gid, m["sender_name"], m["msg_text"], m["ev_time"])
+
+    # 构建上下文
+    msgs_for_llm = memory.build_context(gid, "", "群聊", msgs[-1]["ev_time"])
+    msgs_for_llm.append({
+        "role": "system",
+        "content": (
+            "【指令】以上是最近堆积的群聊消息。请以 Kei 的身份自行判断是否回复。\n"
+            "提到 Kei/ケイ/凯伊 的消息应优先考虑回复。无关消息可以不回。\n"
+            "如果决定不回复任何消息，回复 [PASS]。\n"
+            "如果回复涉及多个不同话题/对象，合在一条不自然时，"
+            "可用 [SEP] 分隔多条回复，每条单独发送。\n"
+            "能自然合为一条就合一条，不要滥用分条。"
+        )
+    })
+
+    # LLM 调用
+    result = await llm_client.chat(messages=msgs_for_llm, max_tokens=512)
+    reply = result.get("content", "").strip()
+
+    if not reply:
+        return
+
+    # 解析多段回复
+    segments = [s.strip() for s in reply.split("[SEP]")]
+    segments = [s for s in segments if s and s != "[PASS]"]
+
+    if not segments:
+        return
+
+    from .remember import extract_and_save
+    for i, seg in enumerate(segments):
+        try:
+            await bot.send_group_msg(group_id=gid, message=Message(seg))
+            memory.add_assistant_message(gid, seg)
+        except Exception:
+            pass
+        if i < len(segments) - 1:
+            await asyncio.sleep(0.3)
+
+    memory.mark_spoke(gid)
+
+    # 提取记忆（用最后一段作为代表性回复）
+    try:
+        await extract_and_save(msgs[-1]["sender_name"], "批量消息", segments[-1])
+    except Exception:
+        pass
+
+
+async def _schedule_flush(gid: int, bot: Bot):
+    """调度缓冲区刷新：取消旧的定时器，启动新的"""
+    if gid not in _buffer_first_ts:
+        _buffer_first_ts[gid] = _time.time()
+
+    # 递增版本号，旧 task 检测到版本不匹配会自动退出
+    _buffer_version[gid] = _buffer_version.get(gid, 0) + 1
+    version = _buffer_version[gid]
+
+    # 取消旧 task（加速清理）
+    old = _buffer_tasks.get(gid)
+    if old and not old.done():
+        old.cancel()
+    _buffer_tasks[gid] = asyncio.create_task(_flush_buffer(gid, bot, version))
 
 
 # ══════════════════════════════════════════════════════
@@ -548,10 +678,10 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
 
 @free_chat.handle()
 async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
-    """自由聊天：无需 @Kei，AI 自主决定是否发言"""
+    """自由聊天：消息进入缓冲区，批量后 Kei 自主判断是否发言"""
     if _is_dup(event):
         return
-    group_id = event.group_id
+    gid = event.group_id
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
@@ -560,43 +690,17 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
-    mentions_kei = bool(re.search(r"(?i)(?<![a-z])kei(?![a-z])|ケイ|凯伊", msg_text))
-
-    if not mentions_kei and not memory.can_speak(group_id):
-        memory.add_message(group_id, sender_name, msg_text, event.time)
-        return
-
-    if not memory.can_process(group_id):
-        memory.add_message(group_id, sender_name, msg_text, event.time)
-        return
-    memory.mark_processed(group_id)
-
-    if not mentions_kei:
-        should = await should_speak(group_id, msg_text, sender_name)
-        if not should:
-            memory.add_message(group_id, sender_name, msg_text, event.time)
-            return
-
-    msgs = memory.build_context(group_id, msg_text, sender_name, event.time)
-    memory.add_message(group_id, sender_name, msg_text, event.time)
-    msgs.append({
-        "role": "system",
-        "content": "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。如果积压了多条用户消息，综合回复即可。"
+    # 放入缓冲区
+    if gid not in _buffer:
+        _buffer[gid] = []
+    _buffer[gid].append({
+        "sender_name": sender_name,
+        "msg_text": msg_text,
+        "ev_time": event.time,
     })
 
-    result = await llm_client.chat(messages=msgs, max_tokens=512)
-    reply = result.get("content", "").strip()
-    if not reply:
-        return
-
-    try:
-        await bot.send_group_msg(group_id=group_id, message=Message(reply))
-        memory.add_assistant_message(group_id, reply)
-        memory.mark_spoke(group_id)
-        from .remember import extract_and_save
-        await extract_and_save(sender_name, msg_text, reply)
-    except Exception:
-        pass
+    # 调度刷新
+    await _schedule_flush(gid, bot)
 
 
 # ══════════════════════════════════════════════════════
