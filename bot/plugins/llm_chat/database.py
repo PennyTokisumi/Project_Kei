@@ -185,6 +185,36 @@ def cleanup_memory(max_count: int = 500):
         _renumber_memories(conn)
 
 
+# ─── 记忆整理 ──────────────────────────────────────────
+
+def get_memory_count() -> int:
+    """记忆总数"""
+    conn = _get_conn()
+    return conn.execute("SELECT COUNT(*) FROM llm_memory").fetchone()[0]
+
+
+def get_tidyable_memories() -> list[dict]:
+    """获取可整理的记忆（importance < 1.0，受保护的不返回）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, content, importance FROM llm_memory WHERE importance < 1.0 ORDER BY id"
+    ).fetchall()
+    return [{"id": r["id"], "content": r["content"], "importance": r["importance"]} for r in rows]
+
+
+def replace_memories(new_items: list[tuple[str, float]]):
+    """删除所有 imp < 1.0 的记忆，插入新列表，重新编号"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM llm_memory WHERE importance < 1.0")
+    for content, imp in new_items:
+        conn.execute(
+            "INSERT INTO llm_memory (content, importance) VALUES (?, ?)",
+            (content, imp),
+        )
+    conn.commit()
+    _renumber_memories(conn)
+
+
 # ─── Token 用量 ──────────────────────────────────────
 
 def log_token_usage(model: str, prompt_tokens: int, completion_tokens: int,
@@ -281,22 +311,29 @@ def cleanup_short_term(group_id: int, max_count: int = 30):
         conn.commit()
 
 
-def load_all_short_term_groups() -> dict[int, list[dict]]:
-    """加载所有群的短期记忆，按 group_id 分组"""
+def load_all_short_term_groups(limit_per_group: int = 15) -> dict[int, list[dict]]:
+    """加载所有群的短期记忆，每组最多 limit_per_group 条（取最新）"""
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT group_id, role, sender, content FROM llm_short_term ORDER BY id ASC"
+        "SELECT group_id, role, sender, content FROM llm_short_term ORDER BY id DESC"
     ).fetchall()
     result: dict[int, list[dict]] = {}
+    counts: dict[int, int] = {}
     for r in rows:
         gid = r["group_id"]
         if gid not in result:
             result[gid] = []
-        result[gid].append({
-            "role": r["role"],
-            "sender": r["sender"],
-            "content": r["content"],
-        })
+            counts[gid] = 0
+        if counts[gid] < limit_per_group:
+            result[gid].append({
+                "role": r["role"],
+                "sender": r["sender"],
+                "content": r["content"],
+            })
+            counts[gid] += 1
+    # 反转回时间正序
+    for gid in result:
+        result[gid].reverse()
     return result
 
 

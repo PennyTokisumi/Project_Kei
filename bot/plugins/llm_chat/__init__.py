@@ -18,7 +18,10 @@ from config import VERSION, config
 from ..monitor.database import get_setting, set_setting
 
 from .client import llm_client
-from .database import get_usage_today, init_llm_db
+from .database import (
+    get_memory_count, get_tidyable_memories, get_usage_today,
+    init_llm_db, replace_memories,
+)
 
 from .memory import memory
 from .persona import PERSONA_PROMPT
@@ -105,7 +108,7 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
     for m in msgs:
         memory.add_message(gid, m["sender_name"], m["msg_text"], m["ev_time"])
 
-    # 构建上下文
+    # 构建上下文（current_msg 为空串，build_context 不会添加占位条目）
     msgs_for_llm = memory.build_context(gid, "", "群聊", msgs[-1]["ev_time"])
     msgs_for_llm.append({
         "role": "system",
@@ -151,6 +154,8 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
     except Exception:
         pass
 
+    await _maybe_trigger_tidy(bot)
+
 
 async def _schedule_flush(gid: int, bot: Bot):
     """调度缓冲区刷新：取消旧的定时器，启动新的"""
@@ -166,6 +171,110 @@ async def _schedule_flush(gid: int, bot: Bot):
     if old and not old.done():
         old.cancel()
     _buffer_tasks[gid] = asyncio.create_task(_flush_buffer(gid, bot, version))
+
+
+# ─── 自动记忆整理 ─────────────────────────────────────
+
+_last_tidy_time: float = 0
+_tidy_lock = asyncio.Lock()
+TIDY_COOLDOWN = 3600   # 两次整理至少间隔 1 小时
+TIDY_THRESHOLD = 50     # 记忆数超过此值触发整理
+
+SENSEI_ONLY_MSG = "\nもう！这个是只有时老师才可以用的！"
+
+TIDY_DONE_MSG = (
+    "休息が大事、という言葉が少し分かってきたかも……\n"
+    "休息很重要，这话我好像有点明白了……"
+)
+
+
+async def _auto_tidy_memories(bot: Bot):
+    """自动整理长期记忆：LLM 去重/合并/调权重，保护 imp=1.0"""
+    async with _tidy_lock:
+        global _last_tidy_time
+        if _time.time() - _last_tidy_time < TIDY_COOLDOWN:
+            return
+        if get_memory_count() <= TIDY_THRESHOLD:
+            return
+        _last_tidy_time = _time.time()
+
+    mems = get_tidyable_memories()
+    if not mems:
+        return
+
+    mem_text = "\n".join(
+        f"· {m['content']} （重要性: {m['importance']:.1f}）" for m in mems
+    )
+    prompt = (
+        "你是 Kei，正在整理自己的长期记忆。以下是当前所有可调整的记忆（重要性 < 1.0）：\n\n"
+        f"{mem_text}\n\n"
+        "请整理：\n"
+        "- 合并高度重复的内容为一条\n"
+        "- 删除过时、矛盾、无意义的条目\n"
+        "- 调整重要性（范围 0.4-0.9），越重要越高\n"
+        "- 重要性 = 1.0 的条目已锁定保留，不需要你处理\n"
+        "- 尽量保持原有信息不丢失\n\n"
+        "输出格式（每行一条，不要编号）：\n"
+        "内容 | 重要性\n\n"
+        "示例：\n"
+        "Sensei喜欢喝冰可乐 | 0.6\n"
+        "爱丽丝是Kei的好朋友 | 0.9\n\n"
+        "只输出整理后的内容，不要其他说明。"
+    )
+
+    result = await llm_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3, max_tokens=1024, enable_thinking=True,
+    )
+    reply = result.get("content", "").strip()
+    if not reply:
+        return
+
+    new_mems: list[tuple[str, float]] = []
+    for line in reply.split("\n"):
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = line.rsplit("|", 1)
+        if len(parts) != 2:
+            continue
+        content = parts[0].strip()
+        try:
+            imp = float(parts[1].strip())
+        except ValueError:
+            continue
+        imp = max(0.4, min(0.9, imp))
+        if content and len(content) > 2:
+            new_mems.append((content, imp))
+
+    if not new_mems:
+        return
+
+    replace_memories(new_mems)
+
+    # 通知所有启用 LLM 的群
+    from ..monitor.database import list_targets
+    targets = list_targets()
+    notified: set[int] = set()
+    for t in targets:
+        gid = t["group_id"]
+        if gid in notified:
+            continue
+        if get_setting(f"llm_enabled_{gid}", "0") == "1":
+            try:
+                await bot.send_group_msg(group_id=gid, message=Message(TIDY_DONE_MSG))
+                notified.add(gid)
+            except Exception:
+                pass
+
+
+async def _maybe_trigger_tidy(bot: Bot):
+    """检查是否需要触发记忆整理（非阻塞）"""
+    if _time.time() - _last_tidy_time < TIDY_COOLDOWN:
+        return
+    if get_memory_count() <= TIDY_THRESHOLD:
+        return
+    asyncio.create_task(_auto_tidy_memories(bot))
 
 
 # ══════════════════════════════════════════════════════
@@ -219,7 +328,7 @@ free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
 async def handle_kei_enable(event: GroupMessageEvent):
     """开关 LLM 群聊功能（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await kei_enable_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -280,7 +389,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
 async def handle_llm_usage(event: GroupMessageEvent):
     """查询今日 token 用量（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await llm_usage_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .database import get_usage_yesterday, get_usage_total
     today = get_usage_today()
@@ -315,10 +424,10 @@ async def handle_llm_usage(event: GroupMessageEvent):
 # ══════════════════════════════════════════════════════
 
 @read_cmd.handle()
-async def handle_read(event: GroupMessageEvent):
+async def handle_read(event: GroupMessageEvent, bot: Bot):
     """@Kei read <文件名> — 读取 data/ 下的文件（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await read_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .file_reader import safe_read
     text = event.get_plaintext().strip()
@@ -369,6 +478,7 @@ async def handle_read(event: GroupMessageEvent):
                 if mem_text and len(mem_text) > 2:
                     save_memory(mem_text, imp)
     cleanup_memory()
+    await _maybe_trigger_tidy(bot)
 
     # 2. 生成回复
     msgs = memory.build_context(event.group_id, f"读取文件 {filename}", extract_user_name(event))
@@ -395,7 +505,7 @@ async def handle_read(event: GroupMessageEvent):
 async def handle_memory(event: GroupMessageEvent):
     """查看长期记忆列表（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await memory_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .database import get_existing_memories
     mems = get_existing_memories()
@@ -411,10 +521,10 @@ async def handle_memory(event: GroupMessageEvent):
 
 
 @addmem_cmd.handle()
-async def handle_addmem(event: GroupMessageEvent):
+async def handle_addmem(event: GroupMessageEvent, bot: Bot):
     """remember <imp> <内容> — 直接添加记忆（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await addmem_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split(None, 2)
@@ -431,6 +541,7 @@ async def handle_addmem(event: GroupMessageEvent):
     content = parts[2].strip()
     from .database import save_memory
     save_memory(content, imp)
+    await _maybe_trigger_tidy(bot)
     await addmem_cmd.finish(Message(f"记忆已添加。imp={imp:.1f}"))
 
 
@@ -438,7 +549,7 @@ async def handle_addmem(event: GroupMessageEvent):
 async def handle_edit(event: GroupMessageEvent):
     """edit <id> <内容> — 修改记忆内容（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await edit_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split(None, 2)
@@ -462,7 +573,7 @@ async def handle_edit(event: GroupMessageEvent):
 async def handle_imp(event: GroupMessageEvent):
     """imp <id> <数字> — 修改重要性（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await imp_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -491,7 +602,7 @@ async def handle_imp(event: GroupMessageEvent):
 async def handle_forget(event: GroupMessageEvent):
     """forget <id> — 删除记忆（仅 Sensei）"""
     if str(event.user_id) != "823262716":
-        return
+        await forget_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -513,7 +624,7 @@ async def handle_forget(event: GroupMessageEvent):
 async def handle_sensei(event: GroupMessageEvent):
     """Sensei 专用，显示全部指令（含隐藏指令）"""
     if str(event.user_id) != "823262716":
-        return
+        await sensei_cmd.finish(Message(SENSEI_ONLY_MSG))
     lines = [
         "\n先生の頼みなら……仕方ありませんね。\n既然是老师的请求……那就没办法了呢。",
         "",
@@ -606,7 +717,7 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
 async def handle_history(event: GroupMessageEvent, bot: Bot):
     """@Kei history — 拉取历史消息并保存"""
     if str(event.user_id) != "823262716":
-        return
+        await history_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
     parts = text.split()
@@ -669,6 +780,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
         await extract_and_save(sender_name, msg_text, reply)
     except Exception:
         pass
+    await _maybe_trigger_tidy(bot)
     await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
 
 
@@ -728,6 +840,190 @@ async def _llm_startup():
         nb_logger.info("LLM Chat 插件已就绪")
 
 
+# ─── Kei 语音风格自学习 ──────────────────────────────
+
+# 所有预设台词汇总（STARTUP + CHAT + STATUS + UNKNOWN）
+_PRESET_MSGS: list[str] = [
+    # STARTUP_MSGS
+    "これから、先生のことを見守らせていただきますね。\n今后就让我来守护老师吧。",
+    "こんにちは、先生。今日のやることをまとめました。\n你好，老师。我已经将今天要做的事项整理好了。",
+    "最初の目標に向けて、まず一歩、ですね。\n向着最初的目标，先迈出一步吧。",
+    "私は、どんな手を使ってでも生き残ってやるつもりですから。\n不管用什么手段，我都会活下去。",
+    # CHAT_MSGS
+    "抵抗するためには前に進まないと。今まではそれも、一人でやらなければと思っていたのですが……結局、人は一人では生きていけないのだと理解しました。\n为了抵抗，必须继续前行。此前我总觉得这些事只能独自承担……但终究还是明白了，人是无法独自活下去的。",
+    "な、何ですか？特に言うことはありませんが……？っ……分かりました……。せ、先生のこと、嫌いではありません……もう、いいですか！？\n怎，怎么了？有没有什么想说的话……？呃……行吧……我、我其实并不讨厌老师……这下可以了吧！？",
+    "こういう言葉は、滅多に言いませんから、ちゃんと聞いてくださいね！？……あまり、危険なことはしないでください。先生が居なくなるのは……私も嫌ですから。\n听好了，我很少说这种话的！？……请你尽量不要做危险的事。因为老师要是不在了……我也会很难过的。",
+    "遠き地の星明かり……という意味です。それだけ昔のことを言っているのだと思います。座標によると、過去と未来は同時に存在するとも言いますから。\n意思是……远方的星光。感觉像是在说久远的往事一样。毕竟根据坐标，过去与未来是同时存在的。",
+    "でもまあ……世の理を知ってしまえば。怒らないでいるのは難しい、と思っているのですが。\n不过嘛……一旦知晓了世间真理。我觉得，想保持不生气实在很难呢。",
+    "食事はちゃんと取っていますか？適度な運動も必要です。早寝早起きが良いのは、大人にも当てはまることなんですよ。\n你有好好吃饭吗？适当的运动也是必要的。早睡早起的好处，对大人也同样适用哦。",
+    "仕事はほどほどに。とはいえ怠けるのもほどほどに。……本当にもう、手が焼けるんですから。\n……真是的，你实在太让人操心啦。工作要适度，不过偷懒也得适可而止。",
+    "……何をニヤニヤしてるんですか！\n……你在那儿偷偷笑什么呢！",
+    "先生がこの世界を見捨てないというのなら。私だって最後まで、絶対に諦めたりしません。\n如果老师不抛弃这个世界的话。那我到最后也不会放弃的。",
+    "私は――先生のこと、嫌いじゃありませんから。\n我——并不讨厌老师呢。",
+    "絶対、大丈夫です。私はずっとここにいます。\n绝对，没问题的。我会一直在这里。",
+    "えっ？何か言いたいことはないか？……ないです。ないったらないと言っているでしょう！\n诶？问我有什么想说的吗？……没有。我说没有就没有！",
+    "先生も休憩を忘れずに！あと歯磨きも！\n老师也别忘记休息！还有刷牙！",
+    "えっ？優しい言葉がほしい……？寝言は時と場所を選んでください！\n诶？想听点温柔的话……？说梦话请选好时间和地点！",
+    "はぁ……手間のかかることをさせないでくださいね。\n唉……请别让我做些费时费力的事啊。",
+    # STATUS_MSGS
+    "えっ？私がちゃんといるのか確認するのが仕事？\n诶？确认我是否好好待着就是你的工作内容吗？",
+    "心配しないでください。私が消えることはありません。\n别担心。我是不会消失的。",
+    "この身体……結構よくできた気がします。\n这个身体……感觉做的相当不错呢。",
+    # UNKNOWN_MSGS
+    "何ですか？用がないなら呼ばないでください。\n什么事？如果没事的话请不要叫我。",
+    "どうかしました？えっ？呼んでみただけ……ですか？\n怎么了？诶？只是喊我一下……是吗？",
+    "特に用がないなら呼ばないでください！\n没什么特别的事就别喊我！",
+    "な、なんですか！？何か言ってほしいんですか！？\n干什么！？想让我说点什么吗！？",
+    "なんでいきなり撫でるんですか！？\n突然摸我干什么！？",
+    "他に必要な物はありませんか？あまり悩む時間は残されていません。\n请问还要其他东西吗？我们还能犹豫的时间不多了。",
+]
+
+_STYLE_LEARNED = False
+
+
+async def _learn_voice(bot: Bot):
+    """一次性：从预设台词中提炼 Kei 的说话风格，存入长期记忆"""
+    global _STYLE_LEARNED
+    if _STYLE_LEARNED:
+        return
+
+    from .database import get_all_memories, save_memory
+    existing = get_all_memories(limit=100)
+    if any("[说话风格]" in m for m in existing):
+        _STYLE_LEARNED = True
+        return
+
+    if not llm_client.available:
+        return
+
+    numbered = "\n\n".join(f"{i+1}. {m}" for i, m in enumerate(_PRESET_MSGS))
+    prompt = (
+        "以下是 Kei 的预设台词。请从中提炼她的说话风格特点，"
+        "生成 4-6 条风格指南，存入长期记忆。\n\n"
+        "要求：\n"
+        "- 不要逐句复制原台词，而是总结她的语气、用词习惯、态度、情感表达方式\n"
+        "- 每条以 [说话风格] 开头，后面用中文描述一个风格特点\n"
+        "- 覆盖：对老师的态度、被戏弄的反应、日常关心的表达、对陌生人的边界感、"
+        "口头禅/语气词使用、傲娇的表现方式\n\n"
+        "预设台词：\n"
+        f"{numbered}\n\n"
+        "输出格式（每行一条）：\n"
+        "[说话风格] 描述 | 0.9\n\n"
+        "示例：\n"
+        "[说话风格] Kei对老师的关心以唠叨/叮嘱的方式表达，表面嫌麻烦实则很在意 | 0.9\n"
+        "[说话风格] Kei被戏弄时先嘴硬否认，但语气会暴露害羞，常用'もう''Baka'等词 | 0.9\n\n"
+        "只输出风格条目，不要其他内容。"
+    )
+
+    result = await llm_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4, max_tokens=512, enable_thinking=True,
+    )
+    reply = result.get("content", "").strip()
+    if not reply:
+        return
+
+    saved = 0
+    for line in reply.split("\n"):
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = line.rsplit("|", 1)
+        if len(parts) != 2:
+            continue
+        content = parts[0].strip()
+        try:
+            imp = float(parts[1].strip())
+        except ValueError:
+            imp = 0.9
+        imp = max(0.4, min(1.0, imp))
+        if content and len(content) > 10 and "[说话风格]" in content:
+            save_memory(content, imp)
+            saved += 1
+
+    if saved > 0:
+        _STYLE_LEARNED = True
+
+
+_VOICE_LEARNED = False
+
+
+async def _learn_from_voice(bot: Bot):
+    """一次性：从语音文本中提炼 Kei 的说话风格和性格特点，存入长期记忆"""
+    global _VOICE_LEARNED
+    if _VOICE_LEARNED:
+        return
+
+    from .database import get_all_memories, save_memory
+    existing = get_all_memories(limit=100)
+    if any("[语音风格]" in m or "[性格特点]" in m for m in existing):
+        _VOICE_LEARNED = True
+        return
+
+    if not llm_client.available:
+        return
+
+    # 读取语音文本
+    from config import DATA_DIR
+    voice_path = DATA_DIR / "voice.txt"
+    if not voice_path.exists():
+        _VOICE_LEARNED = True
+        return
+
+    voice_text = voice_path.read_text(encoding="utf-8").strip()
+    if not voice_text:
+        _VOICE_LEARNED = True
+        return
+
+    prompt = (
+        "以下是天童ケイ（Kei）在游戏《蔚蓝档案》中的官方语音台词（日文+中文翻译）。\n"
+        "请从中提炼她的说话风格和性格特点。\n\n"
+        "要求：\n"
+        "- 不要逐句复述，而是分析总结\n"
+        "- [语音风格] 开头：总结她的语气、口癖、句式模式、情感表达方式（3-5 条）\n"
+        "- [性格特点] 开头：总结她的核心性格、行为模式、待人态度（3-5 条）\n"
+        "- 重要性统一 1.0（重要人设，不可修改删除）\n\n"
+        "语音台词：\n"
+        f"{voice_text[:8000]}\n\n"
+        "输出格式（每行一条）：\n"
+        "[语音风格] 描述 | 1.0\n"
+        "[性格特点] 描述 | 1.0\n\n"
+        "示例：\n"
+        "[语音风格] Kei习惯用'もう！'作为不耐烦时的发语词，叹气'はぁ…'表达无奈 | 1.0\n"
+        "[性格特点] Kei是典型傲娇，嘴上冷淡疏远但心里非常在意老师 | 1.0\n\n"
+        "只输出条目，不要其他内容。"
+    )
+
+    result = await llm_client.chat(
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4, max_tokens=512, enable_thinking=True,
+    )
+    reply = result.get("content", "").strip()
+    if not reply:
+        return
+
+    saved = 0
+    for line in reply.split("\n"):
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = line.rsplit("|", 1)
+        if len(parts) != 2:
+            continue
+        content = parts[0].strip()
+        try:
+            imp = float(parts[1].strip())
+        except ValueError:
+            imp = 0.9
+        imp = max(0.4, min(1.0, imp))
+        if content and len(content) > 10 and ("[语音风格]" in content or "[性格特点]" in content):
+            save_memory(content, imp)
+            saved += 1
+
+    if saved > 0:
+        _VOICE_LEARNED = True
+
+
 @driver.on_bot_connect
 async def _llm_on_connect(bot: Bot):
     """如果 LLM 可用但无长期记忆，提醒老师配置世界观"""
@@ -738,6 +1034,10 @@ async def _llm_on_connect(bot: Bot):
 
     if not llm_client.available:
         return
+
+    # 自学习语音风格（仅运行一次，非阻塞）
+    asyncio.create_task(_learn_voice(bot))
+    asyncio.create_task(_learn_from_voice(bot))
 
     from .database import get_all_memories
     if not get_all_memories(limit=1):

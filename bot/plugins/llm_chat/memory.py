@@ -15,7 +15,7 @@ from .database import (
 from config import config
 from .persona import PERSONA_PROMPT_DS, PERSONA_PROMPT_GM
 
-# {group_id: deque(maxlen=20)}，元素为 (ev_time, role, text)
+# {group_id: deque(maxlen=15)}，元素为 (ev_time, role, text)
 _short_term: dict[int, deque] = {}
 
 # 最近一次 AI 发言时间，用于冷却控制 {group_id: timestamp}
@@ -45,8 +45,16 @@ class MemoryManager:
 
     @classmethod
     def load_from_db(cls):
-        """启动时不从 DB 恢复短期记忆（DB 已关闭）"""
-        pass
+        """启动时从 DB 恢复短期记忆"""
+        groups = load_all_short_term_groups(limit_per_group=15)
+        for gid, entries in groups.items():
+            _short_term[gid] = deque(maxlen=15)
+            for i, e in enumerate(entries):
+                text = f"{e['sender']}: {e['content']}" if e['role'] == 'user' else e['content']
+                _insert_sorted(_short_term[gid], (i, e['role'], text))
+        # 清理 DB 中过旧记录
+        for gid in groups:
+            cleanup_short_term(gid, max_count=30)
 
     # ─── 短期记忆 ────────────────────────────────────
 
@@ -54,16 +62,18 @@ class MemoryManager:
     def add_message(cls, group_id: int, sender: str, content: str, ev_time: int = 0):
         """记录用户消息（按群，按事件时间排序插入）"""
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=20)
+            _short_term[group_id] = deque(maxlen=15)
         _insert_sorted(_short_term[group_id], (ev_time, "user", f"{sender}: {content}"))
+        save_short_term(group_id, "user", sender, content)
 
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
         """记录 Kei 自己的回复（用当前时间排序）"""
         import time as _time
         if group_id not in _short_term:
-            _short_term[group_id] = deque(maxlen=20)
+            _short_term[group_id] = deque(maxlen=15)
         _insert_sorted(_short_term[group_id], (int(_time.time()), "assistant", content))
+        save_short_term(group_id, "assistant", "", content)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
@@ -108,7 +118,7 @@ class MemoryManager:
         })
 
         # 长期记忆：按重要性取前 20 条
-        memories = get_all_memories(limit=20)
+        memories = get_all_memories(limit=30)
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"
@@ -118,8 +128,9 @@ class MemoryManager:
 
         # 短期记忆（按事件时间排序，含当前消息）
         short = list(_short_term.get(group_id, []))
-        cur_entry = (ev_time, "user", f"{sender_name}: {current_msg}")
-        short.append(cur_entry)
+        if current_msg:
+            cur_entry = (ev_time, "user", f"{sender_name}: {current_msg}")
+            short.append(cur_entry)
         short.sort(key=lambda x: x[0])
         for _, role, text in short:
             messages.append({"role": role, "content": text})
