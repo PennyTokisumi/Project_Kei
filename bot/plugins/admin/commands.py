@@ -212,16 +212,33 @@ STATUS_MSGS = [
 @status_cmd.handle()
 async def handle_status(event: GroupMessageEvent):
     """查看机器人运行状态"""
+    import time as _time
+    from ..monitor import _startup_time
+
     all_targets = list_targets()
     group_targets = [t for t in all_targets if t["group_id"] == event.group_id]
+
+    # 运行时长
+    if _startup_time is None:
+        uptime = "刚刚启动"
+    else:
+        minutes = int((_time.time() - _startup_time) / 60)
+        if minutes < 1:
+            uptime = "不到1分钟"
+        elif minutes < 60:
+            uptime = f"{minutes} 分钟"
+        else:
+            h = minutes // 60
+            m = minutes % 60
+            uptime = f"{h} 小时 {m} 分钟"
 
     lines = [
         "\nSensei，以下是监测系统状态。",
         "",
         f"系统内核: v{VERSION}",
-        f"总监测目标: {len(all_targets)} 个",
+        f"监测目标: {len(all_targets)} 个",
         f"本群目标: {len(group_targets)} 个",
-        f"轮询间隔: {config.poll_interval} 秒",
+        f"运行时长: {uptime}",
         "",
         random.choice(STATUS_MSGS),
     ]

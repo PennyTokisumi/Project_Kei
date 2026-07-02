@@ -1,6 +1,7 @@
 """Project_Kei - B站动态/直播 + 斗鱼直播 监测推送插件"""
 
 import random
+import time
 
 from nonebot import get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
@@ -20,6 +21,7 @@ STARTUP_MSGS = [
 ]
 
 _greeting_sent = False
+_startup_time: float | None = None
 
 
 @driver.on_startup
@@ -61,6 +63,9 @@ async def _on_connect(bot: Bot):
             except Exception as e:
                 nb_logger.error(f"上线通知发送失败 [群{gid}]: {e}")
 
+    global _startup_time
+    # 记录启动完成时刻（无论是否发送问候）
+    _startup_time = time.time()
     # 切换托盘为绿点
     tray.set_ready()
     # 写入启动完成信号（供 start.bat 轮询）
