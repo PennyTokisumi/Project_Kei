@@ -106,6 +106,9 @@ async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
         return
 
     nodes = build_dynamic_forward_msg(items)
+    # SnowLuma 要求有效的 user_id/uin，填充 bot 自身 QQ
+    for node in nodes:
+        node["data"]["user_id"] = str(bot.self_id)
     await bot.call_api(
         "send_group_forward_msg",
         group_id=group_id,
