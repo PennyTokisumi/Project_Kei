@@ -26,7 +26,7 @@ data/*.txt
 data/*.bak
 
 # 下载文件
-Download/
+downloads/
 
 # IDE
 .idea/
