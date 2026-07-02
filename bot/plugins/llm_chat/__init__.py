@@ -21,7 +21,7 @@ from .database import get_usage_today, init_llm_db
 from .decision import should_speak
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name
+from .utils import extract_text, extract_user_name, get_reply_text
 
 driver = get_driver()
 
@@ -506,13 +506,18 @@ async def handle_history(event: GroupMessageEvent, bot: Bot):
 # ══════════════════════════════════════════════════════
 
 @llm_at_handler.handle()
-async def handle_llm_at(event: GroupMessageEvent):
+async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     """@Kei 消息在 KEI ON 的群 → LLM 自然回复"""
     if _is_dup(event):
         return
     gid = event.group_id
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
+
+    # 被回复消息的内容注入
+    reply_text = await get_reply_text(event, bot)
+    if reply_text:
+        msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
     _msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
@@ -549,6 +554,11 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     group_id = event.group_id
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
+
+    # 被回复消息的内容注入
+    reply_text = await get_reply_text(event, bot)
+    if reply_text:
+        msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
     mentions_kei = bool(re.search(r"(?i)(?<![a-z])kei(?![a-z])|ケイ|凯伊", msg_text))
 
