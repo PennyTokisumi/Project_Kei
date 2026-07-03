@@ -467,6 +467,83 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
 
 
 # ══════════════════════════════════════════════════════
+#  @Kei remind — 直接调用定时消息
+# ══════════════════════════════════════════════════════
+
+def _remind_rule(event: GroupMessageEvent) -> bool:
+    return event.get_plaintext().strip().lower().startswith("remind")
+
+remind_cmd = on_message(
+    rule=to_me() & Rule(_remind_rule) & Rule(_llm_on_rule),
+    priority=3, block=True,
+)
+
+# 时间模式：匹配在消息开头的各种时间表达
+_REMIND_TIME_PATTERNS = [
+    r'(\d+\s*秒后)\s*',
+    r'(\d+\s*分钟后)\s*',
+    r'(\d+\s*小时后)\s*',
+    r'(\d+:\d{2})\s*',
+    r'((?:晚上|下午|中午|早上|上午)?\d+点(?:半)?)\s*',
+    r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)\s*',
+]
+
+
+def _split_time_from_msg(text: str) -> tuple[str | None, str]:
+    """从消息中分离时间表达式和内容。返回 (时间字符串, 内容)"""
+    for pattern in _REMIND_TIME_PATTERNS:
+        m = re.match(pattern, text)
+        if m:
+            time_str = m.group(1).strip()
+            content = text[m.end():].strip()
+            return time_str, content
+    return None, text
+
+
+@remind_cmd.handle()
+async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
+    """@Kei remind <时间> <内容> — 直接设定定时消息"""
+    text = event.get_plaintext().strip()
+    # 去掉 "remind" 前缀
+    if text.lower().startswith("remind"):
+        text = text[6:].strip()
+
+    if not text:
+        await remind_cmd.finish(
+            Message(
+                "格式: @Kei remind <时间> <内容>\n"
+                "示例: @Kei remind 2分钟后 提醒我喝水\n"
+                "      @Kei remind 晚上8点 提醒我下班打卡\n"
+                "      @Kei remind 13:00 午休时间到啦"
+            ),
+            at_sender=True,
+        )
+
+    time_str, content = _split_time_from_msg(text)
+
+    if not time_str or not content:
+        await remind_cmd.finish(
+            Message(
+                "没看懂时间格式呢……\n"
+                "用法: @Kei remind <时间> <内容>\n"
+                "支持: 5分钟后 / 晚上8点 / 13:30 / 1小时后"
+            ),
+            at_sender=True,
+        )
+
+    nb_logger.info(f"[Agent] @Kei remind: time={time_str} content={content[:100]}")
+
+    result = await _execute_schedule_message(
+        content=content,
+        time_str=time_str,
+        group_id=event.group_id,
+        at_user=str(event.user_id) if "我" in text else None,
+    )
+
+    await remind_cmd.finish(Message(f"\n{result}"), at_sender=True)
+
+
+# ══════════════════════════════════════════════════════
 #  生命周期
 # ══════════════════════════════════════════════════════
 
