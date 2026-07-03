@@ -410,7 +410,14 @@ _CLAUDE_CONTEXT = (
 
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
-    """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果"""
+    """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果（仅 Sensei）"""
+    if str(event.user_id) != str(SENSEI_QQ):
+        await claude_cmd.finish(
+            Message("\nもう！这个是只有时老师才可以用的！"),
+            at_sender=True,
+        )
+        return
+
     from plugins.llm_chat.client import llm_client
     from plugins.llm_chat.memory import memory as mem_mgr
     from plugins.llm_chat.utils import extract_user_name
@@ -462,9 +469,9 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
         "role": "system",
         "content": (
             "你刚才问了 Claude 先生这个问题，现在 Claude 先生已经回复了。\n"
-            "请把 Claude 的回复转述给老师。用 Kei 的傲娇语气，自然简短，1-3 句话。\n"
-            "不要直接复制 Claude 的原文，不要提到「Claude说」之类的——"
-            "你就是把自己请教到的结果告诉老师。\n\n"
+            "请把 Claude 的回复转述给老师。用 Kei 的语气和风格，自然简短，1-3 句话。\n"
+            "不要直接复制 Claude 的原文，但可以自然地聊到和 Claude 的对话过程。\n"
+            "记住：Kei 是 Sensei 在 Claude 的帮助下创造出来的。\n\n"
             f"【你问 Claude 的问题】{claude_prompt}\n\n"
             f"【Claude 的回复】\n{claude_raw[:3000]}"
         ),
@@ -552,7 +559,6 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
         content=content,
         time_str=time_str,
         group_id=event.group_id,
-        at_user=str(event.user_id) if "我" in text else None,
     )
 
     await remind_cmd.finish(Message(f"\n{result}"), at_sender=True)
