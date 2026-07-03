@@ -496,7 +496,7 @@ def _remind_rule(event: GroupMessageEvent) -> bool:
     return event.get_plaintext().strip().lower().startswith("remind")
 
 remind_cmd = on_message(
-    rule=to_me() & Rule(_remind_rule) & Rule(_llm_on_rule),
+    rule=to_me() & Rule(_remind_rule),
     priority=3, block=True,
 )
 
