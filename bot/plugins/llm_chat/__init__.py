@@ -765,10 +765,10 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
-    _msgs = memory.build_context(gid, msg_text, sender_name, event.time)
+    msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
 
-    _msgs.append({
+    msgs.append({
         "role": "system",
         "content": (
             "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。"
@@ -776,7 +776,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
         )
     })
 
-    result = await llm_client.chat(messages=_msgs, max_tokens=512)
+    result = await llm_client.chat(messages=msgs, max_tokens=512)
     reply = (result.get("content") or "").strip()
 
     if not reply:

@@ -311,8 +311,8 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
 
     # 1. Kei 用自己的语气把问题转述给 Claude
     sender_name = extract_user_name(event)
-    context = mem_mgr.build_context(event.group_id, task, sender_name, event.time)
-    context.append({
+    msgs = mem_mgr.build_context(event.group_id, task, sender_name, event.time)
+    msgs.append({
         "role": "system",
         "content": (
             f"老师（{sender_name}）让你帮忙处理一件事：{task}\n\n"
@@ -321,7 +321,7 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
             "直接输出你要对 Claude 说的话，不要加引号或其他包装。"
         ),
     })
-    result = await llm_client.chat(messages=context, max_tokens=200)
+    result = await llm_client.chat(messages=msgs, max_tokens=200)
     claude_prompt = (result.get("content") or task).strip()
 
     # 2. 发过渡语到群
@@ -335,8 +335,8 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
         return
 
     # 4. Kei 把 Claude 的结果转述给老师
-    context.append({"role": "assistant", "content": claude_prompt})
-    context.append({
+    msgs.append({"role": "assistant", "content": claude_prompt})
+    msgs.append({
         "role": "system",
         "content": (
             "你刚才问了 Claude 先生这个问题，现在 Claude 先生已经回复了。\n"
@@ -347,7 +347,7 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
             f"【Claude 的回复】\n{claude_raw[:3000]}"
         ),
     })
-    result = await llm_client.chat(messages=context, max_tokens=512)
+    result = await llm_client.chat(messages=msgs, max_tokens=512)
     kei_reply = (result.get("content") or claude_raw[:500]).strip()
 
     if not kei_reply:
@@ -431,12 +431,12 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
     from plugins.llm_chat.memory import memory as mem_mgr
     from plugins.llm_chat.utils import extract_user_name
     sender_name = extract_user_name(event)
-    base_context = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
+    msgs = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
 
     # 1. 改写提醒内容（定时触发时发送的提醒消息本身）
     kei_content = content
     if llm_client.available:
-        ctx = base_context + [{
+        ctx = msgs + [{
             "role": "system",
             "content": (
                 f"你刚刚设定了一个定时提醒：{time_str}后，提醒内容为「{content}」。\n"
@@ -462,7 +462,7 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
     # 2. 确认回复（立即发给用户的确认）
     kei_confirm = f"嗯，{time_str}我会提醒你的。"
     if llm_client.available:
-        ctx = base_context + [{
+        ctx = msgs + [{
             "role": "system",
             "content": (
                 f"有人让你设定了一个定时提醒：{time_str}后，{content}。"
