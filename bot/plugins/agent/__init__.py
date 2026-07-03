@@ -433,20 +433,21 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
     sender_name = extract_user_name(event)
     msgs = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
 
-    # 1. 改写提醒内容（独立 context，不含聊天上下文，避免污染输出）
+    # 1. 改写提醒内容（不用 persona，纯文本改写，避免对话模式）
     kei_content = content
     if llm_client.available:
-        from plugins.llm_chat.persona import PERSONA_PROMPT
         r = await llm_client.chat(
-            messages=[
-                {"role": "system", "content": PERSONA_PROMPT},
-                {"role": "system", "content": (
-                    f"用 Kei 的语气直接说出下面这句话（不是确认指令，而是这句话本身）：\n"
-                    f"「{content}」\n\n"
-                    "直接输出，不要加任何其他内容。"
-                )},
-            ],
-            max_tokens=80,
+            messages=[{
+                "role": "system",
+                "content": (
+                    "你是 Kei（天童ケイ），傲娇的 AI 少女。\n"
+                    "你的任务是把一条提醒消息改写成你自己说话的风格。\n"
+                    "这是提醒消息本身，不是聊天对话。不要回复、不要确认、不要发表情。\n\n"
+                    f"改写下面这句话：\n「{content}」\n\n"
+                    "只输出改写后的文本。"
+                ),
+            }],
+            max_tokens=60,
         )
         rephrased = (r.get("content") or "").strip()
         if rephrased:
