@@ -295,6 +295,7 @@ async def handle_help(event: GroupMessageEvent):
         "add bilibili_live <房间号>  -  添加B站直播监测",
         "add bilibili_dynamic <UID>  -  添加B站动态监测",
         "add douyu_live <房间号>  -  添加斗鱼直播监测",
+        "remind <时间> <内容>  -  设定定时提醒",
         "",
         "私は力になれましたか？\n我能帮上忙吗？",
     ]

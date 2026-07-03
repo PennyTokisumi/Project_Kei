@@ -643,6 +643,7 @@ async def handle_sensei(event: GroupMessageEvent):
         "",
         "── 以下为 Sensei 专用隐藏指令 ──",
         "",
+        "Claude <任务>  -  请 Claude 帮忙处理复杂任务",
         "KEI ON/OFF  -  开关 LLM 群聊功能",
         "LLM  -  查询 LLM Token 用量",
         "read <文件名>  -  读取 data/ 下的文件",
