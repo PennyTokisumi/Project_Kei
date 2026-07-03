@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import re
+import shutil
 from datetime import datetime, timezone, timedelta
 
 from nonebot import get_bot, get_driver, on_message, logger as nb_logger
@@ -46,6 +47,15 @@ _TRANSITIONS = [
 ]
 
 _claude_semaphore = asyncio.Semaphore(1)
+
+# 启动时解析 claude 路径
+_CLAUDE_PATH = shutil.which("claude") or ""
+if not _CLAUDE_PATH:
+    # 回退到 npm 全局路径
+    from pathlib import Path as _Path
+    _npm_claude = _Path.home() / "AppData" / "Roaming" / "npm" / "claude.cmd"
+    if _npm_claude.exists():
+        _CLAUDE_PATH = str(_npm_claude)
 
 
 # ══════════════════════════════════════════════════════
@@ -129,9 +139,12 @@ async def _execute_delegate_to_claude(task: str, group_id: int, bot: Bot) -> str
 
     # 2. 串行化调用 Claude
     async with _claude_semaphore:
+        if not _CLAUDE_PATH:
+            return "[Claude 暂时无法连接: claude 命令未找到]"
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                "claude", "-p", task,
+                _CLAUDE_PATH, "-p", task,
                 "--output-format", "text",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
