@@ -128,23 +128,15 @@ def _parse_time(time_str: str) -> str | None:
 #  工具执行函数
 # ══════════════════════════════════════════════════════
 
-async def _execute_delegate_to_claude(task: str, group_id: int, bot: Bot) -> str:
-    """发自然过渡语 → 调 claude -p → 返回截断后的结果"""
-    # 1. 发自然过渡语
-    transition = random.choice(_TRANSITIONS)
-    try:
-        await bot.send_group_msg(group_id=group_id, message=transition)
-    except Exception:
-        pass
-
-    # 2. 串行化调用 Claude
+async def _call_claude(prompt: str) -> str:
+    """调用 Claude CLI，返回原始结果（不含过渡语）"""
     async with _claude_semaphore:
         if not _CLAUDE_PATH:
             return "[Claude 暂时无法连接: claude 命令未找到]"
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                _CLAUDE_PATH, "-p", task,
+                _CLAUDE_PATH, "-p", prompt,
                 "--output-format", "text",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -178,6 +170,21 @@ async def _execute_delegate_to_claude(task: str, group_id: int, bot: Bot) -> str
             + f"\n\n[Claude 回复 — 已截断至前 {_MAX_TOOL_RESULT_CHARS} 字符]"
         )
     return text
+
+
+async def _send_transition(group_id: int, bot: Bot):
+    """发一条随机过渡语到群"""
+    transition = random.choice(_TRANSITIONS)
+    try:
+        await bot.send_group_msg(group_id=group_id, message=transition)
+    except Exception:
+        pass
+
+
+async def _execute_delegate_to_claude(task: str, group_id: int, bot: Bot) -> str:
+    """发自然过渡语 → 调 claude -p → 返回截断后的结果（agent_loop 用）"""
+    await _send_transition(group_id, bot)
+    return await _call_claude(task)
 
 
 async def _execute_remember(content: str, importance: float = 0.6) -> str:
@@ -395,13 +402,13 @@ claude_cmd = on_message(
 
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
-    """@Kei Claude <任务> — 直接调用 Claude Code，不经过 agent_loop"""
+    """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果 → 记住对话"""
     from plugins.llm_chat.client import llm_client
     from plugins.llm_chat.memory import memory as mem_mgr
     from plugins.llm_chat.utils import extract_user_name
+    from plugins.llm_chat.database import save_memory as _save_mem
 
     task = event.get_plaintext().strip()
-    # 去掉 "Claude" 前缀（大小写不敏感）
     if task.lower().startswith("claude"):
         task = task[6:].strip()
 
@@ -413,57 +420,68 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
 
     nb_logger.info(f"[Agent] @Kei Claude 指令: {task[:200]}")
 
-    # 1. 获取 Claude 的原始结果
-    claude_raw = await _execute_delegate_to_claude(task, event.group_id, bot)
-
-    if claude_raw.startswith("[Claude"):
-        # Claude 出错（超时/无法连接/错误），直接返回
-        await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
+    if not llm_client.available:
+        await claude_cmd.finish(Message("\nLLM 服务未配置，无法使用 Claude 指令。"), at_sender=True)
         return
 
-    # 2. Kei 分两步回复：先复述需求，再转述结果
+    # 1. Kei 用自己的语气把问题转述给 Claude
     sender_name = extract_user_name(event)
     context = mem_mgr.build_context(event.group_id, task, sender_name, event.time)
     context.append({
         "role": "system",
         "content": (
-            "刚才你请 Claude 先生帮忙处理了老师的一个任务。"
-            "现在需要你向老师汇报结果。\n\n"
-            "请分两步回复，用 [SEP] 分隔：\n"
-            "第一步：用 Kei 的语气复述一下老师让你查了什么，让老师知道你理解了需求。"
-            "要自然，不要像机器人一样复读。\n"
-            "第二步：转述 Claude 查到的结果，用自己的语气，保持 Kei 的傲娇风格，"
-            "不要直接复制粘贴 Claude 的原文。\n\n"
-            f"【老师的需求】{task}\n\n"
-            f"【Claude 的回复】\n{claude_raw[:3000]}"
+            f"老师（{sender_name}）让你帮忙处理一件事：{task}\n\n"
+            "现在你要去请教 Claude 先生。请用 Kei 的语气，以「对 Claude 先生说话」的口吻，"
+            "把这件事转述给 Claude。要自然，1-2 句话，可以中英日混用。\n\n"
+            "直接输出你要对 Claude 说的话，不要加引号或其他包装。"
         ),
     })
+    result = await llm_client.chat(messages=context, max_tokens=200)
+    claude_prompt = (result.get("content") or task).strip()
 
-    if not llm_client.available:
-        # LLM 不可用时直接发 Claude 原文
-        if len(claude_raw) > 2000:
-            claude_raw = claude_raw[:2000] + "\n\n[结果过长，已截断]"
+    # 2. 发过渡语到群
+    await _send_transition(event.group_id, bot)
+
+    # 3. 用 Kei 转述后的内容调 Claude
+    claude_raw = await _call_claude(claude_prompt)
+
+    if claude_raw.startswith("[Claude"):
         await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
         return
 
+    # 4. Kei 把 Claude 的结果转述给老师
+    context.append({"role": "assistant", "content": claude_prompt})
+    context.append({
+        "role": "system",
+        "content": (
+            "你刚才问了 Claude 先生这个问题，现在 Claude 先生已经回复了。\n"
+            "请把 Claude 的回复转述给老师。用 Kei 的傲娇语气，自然简短，1-3 句话。\n"
+            "不要直接复制 Claude 的原文，不要提到「Claude说」之类的——"
+            "你就是把自己请教到的结果告诉老师。\n\n"
+            f"【你问 Claude 的问题】{claude_prompt}\n\n"
+            f"【Claude 的回复】\n{claude_raw[:3000]}"
+        ),
+    })
     result = await llm_client.chat(messages=context, max_tokens=512)
-    kei_reply = (result.get("content") or "").strip()
+    kei_reply = (result.get("content") or claude_raw[:500]).strip()
 
     if not kei_reply:
-        await claude_cmd.finish(Message("……"), at_sender=True)
-        return
+        kei_reply = claude_raw[:500]
 
-    # 按 [SEP] 分割，逐条发送
-    segments = [s.strip() for s in kei_reply.split("[SEP]")]
-    segments = [s for s in segments if s]
-    for i, seg in enumerate(segments[:3]):  # 最多 3 段
-        if len(seg) > 2000:
-            seg = seg[:2000] + "\n\n[结果过长，已截断]"
-        await bot.send_group_msg(group_id=event.group_id, message=Message(seg))
-        if i < len(segments[:3]) - 1:
-            await asyncio.sleep(0.5)
+    if len(kei_reply) > 2000:
+        kei_reply = kei_reply[:2000] + "\n\n[结果过长，已截断]"
 
-    return  # 消息已在上方逐条发出
+    # 5. 保存 Kei-Claude 对话到长期记忆
+    claude_summary = claude_raw[:500]
+    try:
+        _save_mem(
+            f"Kei问Claude: {claude_prompt[:200]} → Claude答: {claude_summary[:200]}",
+            importance=0.5,
+        )
+    except Exception:
+        pass
+
+    await claude_cmd.finish(Message(f"\n{kei_reply}"), at_sender=True)
 
 
 # ══════════════════════════════════════════════════════
