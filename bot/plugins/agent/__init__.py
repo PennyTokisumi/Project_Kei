@@ -433,18 +433,21 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
     sender_name = extract_user_name(event)
     base_context = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
 
-    # 改写提醒内容为 Kei 风格，同时用作确认回复和定时内容
+    # 1. 改写提醒内容（定时触发时发送的提醒消息本身）
     kei_content = content
     if llm_client.available:
         ctx = base_context + [{
             "role": "system",
             "content": (
-                f"有人设了一个定时提醒：{time_str}后，{content}。\n"
-                "请用 Kei 的语气把这条提醒说出来，这是你现在就要回复给对方的话。\n"
-                "简短（1句话），带点傲娇，别太啰嗦。直接输出。"
+                f"你刚刚设定了一个定时提醒：{time_str}后，提醒内容为「{content}」。\n"
+                "现在需要用 Kei 的语气写出这条提醒消息。\n"
+                "这是时间到了之后直接发给对方的提醒文本。\n"
+                "注意：是写提醒内容本身，不是确认收到指令。\n"
+                "不要说「计时器」「知道了」「设好了」之类的话。\n"
+                "简短（1句话），直接输出。"
             ),
         }]
-        r = await llm_client.chat(messages=ctx, max_tokens=100)
+        r = await llm_client.chat(messages=ctx, max_tokens=80)
         rephrased = (r.get("content") or "").strip()
         if rephrased:
             kei_content = rephrased
@@ -456,7 +459,22 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
         at_user=str(event.user_id),
     )
 
-    await remind_cmd.finish(Message(f"\n{kei_content}"), at_sender=True)
+    # 2. 确认回复（立即发给用户的确认）
+    kei_confirm = f"嗯，{time_str}我会提醒你的。"
+    if llm_client.available:
+        ctx = base_context + [{
+            "role": "system",
+            "content": (
+                f"有人让你设定了一个定时提醒：{time_str}后，{content}。"
+                "请以 Kei 的身份用傲娇的语气确认收到了，1句话。直接输出。"
+            ),
+        }]
+        r = await llm_client.chat(messages=ctx, max_tokens=100)
+        confirm = (r.get("content") or "").strip()
+        if confirm:
+            kei_confirm = confirm
+
+    await remind_cmd.finish(Message(f"\n{kei_confirm}"), at_sender=True)
 
 
 # ══════════════════════════════════════════════════════
