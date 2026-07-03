@@ -26,6 +26,7 @@ class Config(BaseSettings):
 
     # 日志
     log_level: str = Field(default="INFO")
+    log_file: str = Field(default="", description="日志文件路径，如 data/kei.log，留空则不输出文件")
 
     # LLM
     llm_provider: str = Field(default="deepseek", description="LLM 供应商: deepseek / gemini")
