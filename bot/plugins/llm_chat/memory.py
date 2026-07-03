@@ -22,7 +22,7 @@ _short_term: dict[int, deque] = {}
 _last_speak_time: dict[int, float] = {}
 
 # 冷却时间（秒），避免刷屏
-COOLDOWN_SECONDS = 3
+COOLDOWN_SECONDS = 5
 
 
 
