@@ -376,10 +376,14 @@ claude_cmd = on_message(rule=to_me() & Rule(_claude_rule), priority=3, block=Tru
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     """@Kei Claude <任务> — 直接调用 Claude Code，不经过 agent_loop"""
+    from plugins.llm_chat.client import llm_client
+    from plugins.llm_chat.memory import memory as mem_mgr
+    from plugins.llm_chat.utils import extract_user_name
+
     task = event.get_plaintext().strip()
     # 去掉 "Claude" 前缀（大小写不敏感）
     if task.lower().startswith("claude"):
-        task = task[6:].strip()  # "Claude" = 6 chars
+        task = task[6:].strip()
 
     if not task:
         await claude_cmd.finish(
@@ -389,12 +393,36 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
 
     nb_logger.info(f"[Agent] @Kei Claude 指令: {task[:200]}")
 
-    result = await _execute_delegate_to_claude(task, event.group_id, bot)
+    # 1. 获取 Claude 的原始结果
+    claude_raw = await _execute_delegate_to_claude(task, event.group_id, bot)
 
-    # QQ 消息长度限制，截断到 2000 字符
-    if len(result) > 2000:
-        result = result[:2000] + "\n\n[结果过长，已截断]"
-    await claude_cmd.finish(Message(f"\n{result}"), at_sender=True)
+    # 2. Kei 用自己的语气转述 Claude 的结果
+    sender_name = extract_user_name(event)
+    context = mem_mgr.build_context(event.group_id, task, sender_name, event.time)
+    context.append({
+        "role": "system",
+        "content": (
+            "刚才你请 Claude 先生帮忙处理了一个任务。以下是 Claude 给你的回复。\n"
+            "请用 Kei 的语气，把 Claude 的信息转述给老师。\n"
+            "保持 Kei 的风格——傲娇、自然、简短（1-3句话），不要直接复制粘贴Claude的原文。\n\n"
+            f"【Claude的回复】\n{claude_raw[:3000]}"
+        ),
+    })
+
+    if not llm_client.available:
+        # LLM 不可用时直接发 Claude 原文
+        if len(claude_raw) > 2000:
+            claude_raw = claude_raw[:2000] + "\n\n[结果过长，已截断]"
+        await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
+        return
+
+    result = await llm_client.chat(messages=context, max_tokens=512)
+    kei_reply = (result.get("content") or claude_raw[:2000]).strip()
+
+    if len(kei_reply) > 2000:
+        kei_reply = kei_reply[:2000] + "\n\n[结果过长，已截断]"
+
+    await claude_cmd.finish(Message(f"\n{kei_reply}"), at_sender=True)
 
 
 # ══════════════════════════════════════════════════════
