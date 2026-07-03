@@ -757,7 +757,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
-    # 被回复消息的内容注入
+    # 被回复消息的内容注入（SnowLuma event.reply）
     reply_text = await get_reply_text(event, bot)
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"

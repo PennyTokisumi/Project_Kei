@@ -135,12 +135,6 @@ class MemoryManager:
         for _, role, text in short:
             messages.append({"role": role, "content": text})
 
-        # 调试 dump
-        import time as _td; from config import DATA_DIR; _d = DATA_DIR
-        _ctx = [f"[{m['role']}] {m['content'][:100]}" for m in messages]
-        with open(_d / "ctx_dump.log", "a", encoding="utf-8") as _f:
-            _f.write(f"\n=== {_td.strftime('%H:%M:%S')} ===\n" + "\n".join(_ctx) + "\n")
-
         return messages
 
 
