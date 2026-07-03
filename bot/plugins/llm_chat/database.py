@@ -59,6 +59,23 @@ def init_llm_db():
 
 # ─── 长期记忆 ────────────────────────────────────────
 
+_mem_cache: list[dict] | None = None
+
+
+def _invalidate_cache():
+    """写操作后失效缓存"""
+    global _mem_cache
+    _mem_cache = None
+
+
+def get_mem_cache() -> list[dict]:
+    """获取记忆缓存，首次调用从 DB 加载"""
+    global _mem_cache
+    if _mem_cache is None:
+        _mem_cache = get_existing_memories()
+    return _mem_cache
+
+
 def save_memory(content: str, importance: float = 0.5):
     """保存长期记忆（全全局）"""
     conn = _get_conn()
@@ -67,6 +84,7 @@ def save_memory(content: str, importance: float = 0.5):
         (content, importance),
     )
     conn.commit()
+    _invalidate_cache()
 
 
 def search_memory(query: str, limit: int = 8) -> list[str]:
@@ -122,6 +140,7 @@ def update_memory(memory_id: int, content: str, importance: float):
         (content, importance, memory_id),
     )
     conn.commit()
+    _invalidate_cache()
 
 
 def delete_memory_by_keyword(keyword: str):
@@ -140,6 +159,7 @@ def delete_memory_by_id(mid: int):
     conn = _get_conn()
     conn.execute("DELETE FROM llm_memory WHERE id=?", (mid,))
     conn.commit()
+    _invalidate_cache()
     _renumber_memories(conn)
 
 
@@ -148,6 +168,7 @@ def update_memory_content(mid: int, content: str):
     conn = _get_conn()
     conn.execute("UPDATE llm_memory SET content=? WHERE id=?", (content, mid))
     conn.commit()
+    _invalidate_cache()
 
 
 def update_memory_imp(mid: int, imp: float):
@@ -155,6 +176,7 @@ def update_memory_imp(mid: int, imp: float):
     conn = _get_conn()
     conn.execute("UPDATE llm_memory SET importance=? WHERE id=?", (imp, mid))
     conn.commit()
+    _invalidate_cache()
 
 
 def _renumber_memories(conn=None):

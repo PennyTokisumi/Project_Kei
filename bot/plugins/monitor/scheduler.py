@@ -103,23 +103,24 @@ async def poll_source(source: SourceBase):
             if not new_items:
                 return
 
-    # 推送（成功后再标记已推送，防止推送失败丢失内容）
-    try:
-        if is_live:
-            for item in new_items:
+    # 推送（逐条处理，单个失败不影响其他）
+    if is_live:
+        for item in new_items:
+            try:
                 await send_live_notification(bot, source.group_id, item)
-            nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
-        else:
-            await send_dynamic_forward(bot, source.group_id, new_items)
-            nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
-    except Exception as e:
-        nb_logger.error(f"推送失败 [{source.platform}/{source.target_id}]: {e}")
-        # 直播推送失败时回滚状态，下次轮询可重试
-        if is_live:
-            for item in new_items:
+            except Exception as e:
+                nb_logger.error(f"推送开播失败 [{source.platform}/{source.target_id}]: {e}")
+                # 仅回滚本条，下次轮询可重试
                 tracker = LiveStatusTracker(item.target_id, item.platform)
                 tracker.check_and_update(is_living=False, title="")
-        return
+        nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
+    else:
+        try:
+            await send_dynamic_forward(bot, source.group_id, new_items)
+            nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
+        except Exception as e:
+            nb_logger.error(f"推送动态失败 [{source.platform}/{source.target_id}]: {e}")
+            return
 
     # 推送成功后标记（动态类才需要去重标记）
     for item in new_items:

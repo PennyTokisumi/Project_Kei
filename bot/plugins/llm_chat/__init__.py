@@ -14,7 +14,7 @@ from nonebot import get_driver, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import Rule, to_me, startswith
 
-from config import VERSION, config
+from config import config
 from ..monitor.database import get_setting, set_setting
 
 from .client import llm_client
@@ -510,7 +510,7 @@ async def handle_memory(event: GroupMessageEvent):
     from .database import get_existing_memories
     mems = get_existing_memories()
     if not mems:
-        await memory_cmd.finish(Message("\当前没有任何长期记忆。"))
+        await memory_cmd.finish(Message("\n当前没有任何长期记忆。"))
         return
 
     lines = [f"Sensei，以下是当前长期记忆（共 {len(mems)} 条）。", ""]

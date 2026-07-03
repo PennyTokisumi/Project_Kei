@@ -59,11 +59,7 @@ class LLMClient:
             "temperature": temperature,
             "stream": False,
         }
-        # Gemini 的 max_tokens 含 prompt，设低会截断输出；设安全帽即可
-        if not self._is_gemini:
-            payload["max_tokens"] = max_tokens
-        else:
-            payload["max_tokens"] = 2048
+        payload["max_tokens"] = max_tokens
         if not self._is_gemini and enable_thinking:
             payload["reasoning_effort"] = thinking_effort
         elif not self._is_gemini:

@@ -11,6 +11,25 @@ def has_image(event: GroupMessageEvent) -> bool:
     return False
 
 
+def _segments_to_text(segments, get_type, get_data) -> str:
+    """将消息段列表转为纯文本，兼容 SnowLuma (attr) 和 OneBot (dict)。"""
+    parts = []
+    for s in segments:
+        t = get_type(s)
+        d = get_data(s)
+        if t == "text":
+            parts.append(d.get("text", ""))
+        elif t == "image":
+            parts.append("[图片]")
+        elif t == "at":
+            parts.append(f"[@用户{d.get('qq','')}]")
+        elif t == "face":
+            parts.append("[表情]")
+        else:
+            parts.append(f"[{t}]")
+    return "".join(parts)
+
+
 async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
     """获取被回复消息的发送者名和文本内容。
 
@@ -28,25 +47,12 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                 sender_name = ""
 
             msg = getattr(ev_reply, "message", "")
-            text = ""
             if isinstance(msg, list):
-                parts = []
-                for s in msg:
-                    t = getattr(s, "type", "")
-                    d = getattr(s, "data", {}) or {}
-                    if t == "text":
-                        parts.append(d.get("text", ""))
-                    elif t == "image":
-                        parts.append("[图片]")
-                    elif t == "at":
-                        parts.append(f"[@用户{d.get('qq','')}]")
-                    elif t == "face":
-                        parts.append("[表情]")
-                    else:
-                        parts.append(f"[{t}]")
-                text = "".join(parts)
+                text = _segments_to_text(msg, lambda s: getattr(s, "type", ""), lambda s: getattr(s, "data", {}) or {})
             elif isinstance(msg, str):
                 text = msg
+            else:
+                text = ""
 
             if sender_name and text:
                 return f"{sender_name}: {text}"
@@ -66,25 +72,12 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                     sender_name = sender.get("nickname", "") or sender.get("card", "") or f"QQ{sender.get('user_id','')}"
 
                     msg = resp.get("message", "")
-                    text = ""
                     if isinstance(msg, list):
-                        parts = []
-                        for s in msg:
-                            t = s.get("type", "")
-                            d = s.get("data", {}) or {}
-                            if t == "text":
-                                parts.append(d.get("text", ""))
-                            elif t == "image":
-                                parts.append("[图片]")
-                            elif t == "at":
-                                parts.append(f"[@用户{d.get('qq','')}]")
-                            elif t == "face":
-                                parts.append("[表情]")
-                            else:
-                                parts.append(f"[{t}]")
-                        text = "".join(parts)
+                        text = _segments_to_text(msg, lambda s: s.get("type", ""), lambda s: s.get("data", {}) or {})
                     elif isinstance(msg, str):
                         text = msg
+                    else:
+                        text = ""
 
                     if sender_name and text:
                         return f"{sender_name}: {text}"

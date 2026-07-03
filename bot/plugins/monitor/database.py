@@ -83,28 +83,14 @@ def add_target(group_id: int, platform: str, target_id: str,
                target_name: Optional[str] = None) -> int:
     """添加监测目标，返回 id"""
     conn = get_conn()
-    try:
-        cur = conn.execute(
-            "INSERT INTO monitor_targets (group_id, platform, target_id, target_name) "
-            "VALUES (?, ?, ?, ?)",
-            (group_id, platform, target_id, target_name or ""),
-        )
-        conn.commit()
-        return cur.lastrowid
-    except sqlite3.IntegrityError:
-        # 已存在 → 删旧插新，让新 id 排到列表末尾
-        conn.execute(
-            "DELETE FROM monitor_targets WHERE group_id=? AND platform=? AND target_id=?",
-            (group_id, platform, target_id),
-        )
-        conn.commit()
-        cur = conn.execute(
-            "INSERT INTO monitor_targets (group_id, platform, target_id, target_name) "
-            "VALUES (?, ?, ?, ?)",
-            (group_id, platform, target_id, target_name or ""),
-        )
-        conn.commit()
-        return cur.lastrowid
+    cur = conn.execute(
+        "INSERT INTO monitor_targets (group_id, platform, target_id, target_name, enabled) "
+        "VALUES (?, ?, ?, ?, 1) "
+        "ON CONFLICT(group_id, platform, target_id) DO UPDATE SET target_name=excluded.target_name, enabled=1",
+        (group_id, platform, target_id, target_name or ""),
+    )
+    conn.commit()
+    return cur.lastrowid
 
 
 def remove_target(target_id: int) -> bool:

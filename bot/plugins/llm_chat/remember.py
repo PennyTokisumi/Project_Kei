@@ -4,7 +4,7 @@ import json
 
 from config import config as _cfg
 from .client import llm_client
-from .database import save_memory, update_memory, cleanup_memory, get_existing_memories
+from .database import save_memory, update_memory, cleanup_memory, get_mem_cache
 
 
 async def _extract_call(prompt: str, max_tokens: int = 256) -> str:
@@ -27,7 +27,7 @@ def _token_overlap(a: str, b: str) -> float:
 
 
 def _upsert_memory(content: str, importance: float):
-    existing = get_existing_memories()
+    existing = get_mem_cache()
     for mem in existing:
         overlap = _token_overlap(content, mem["content"])
         if overlap >= 0.4:
@@ -46,8 +46,8 @@ async def extract_and_save(sender: str, user_msg: str, kei_reply: str,
     if not _cfg.llm_api_key:
         return
 
-    existing = get_existing_memories()
-    mem_list = "\n".join(f"  [{m['id']}] {m['content']}" for m in existing[:5])
+    mem_cache = get_mem_cache()
+    mem_list = "\n".join(f"  [{m['id']}] {m['content']}" for m in mem_cache[:5])
 
     extra_text = ""
     if extra:

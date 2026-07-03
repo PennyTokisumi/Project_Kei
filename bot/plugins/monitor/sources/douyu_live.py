@@ -10,6 +10,16 @@ DOUYU_API_OFFICIAL = "https://www.douyu.com/betard/{room_id}"
 # 第三方镜像（备用）
 DOUYU_API_FALLBACK = "https://open.douyucdn.cn/api/RoomApi/room/{room_id}"
 
+def _fix_cover(url: str) -> str:
+    """验证并补全封面 URL，处理协议相对路径"""
+    if not url:
+        return ""
+    if url.startswith("//"):
+        return "https:" + url
+    if url.startswith("http"):
+        return url
+    return ""
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -76,7 +86,7 @@ class DouyuLive(SourceBase):
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
             link=f"https://www.douyu.com/{room_id}",
-            cover_url=cover if cover.startswith("http") else "",
+            cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("second_lvl_name", ""),
             },
@@ -117,7 +127,7 @@ class DouyuLive(SourceBase):
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
             link=f"https://www.douyu.com/{self.target_id}",
-            cover_url=cover if cover.startswith("http") else "",
+            cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("game_name", ""),
             },

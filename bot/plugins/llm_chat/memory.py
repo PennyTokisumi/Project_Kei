@@ -1,6 +1,8 @@
 """LLM Chat 插件 — 记忆管理"""
 
+import time
 from collections import deque
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from .database import (
@@ -69,22 +71,19 @@ class MemoryManager:
     @classmethod
     def add_assistant_message(cls, group_id: int, content: str):
         """记录 Kei 自己的回复（用当前时间排序）"""
-        import time as _time
         if group_id not in _short_term:
             _short_term[group_id] = deque(maxlen=10)
-        _insert_sorted(_short_term[group_id], (int(_time.time()), "assistant", content))
+        _insert_sorted(_short_term[group_id], (int(time.time()), "assistant", content))
         save_short_term(group_id, "assistant", "", content)
 
     @classmethod
     def can_speak(cls, group_id: int) -> bool:
         """检查冷却时间是否允许发言"""
-        import time
         last = _last_speak_time.get(group_id, 0)
         return (time.time() - last) >= COOLDOWN_SECONDS
 
     @classmethod
     def mark_spoke(cls, group_id: int):
-        import time
         _last_speak_time[group_id] = time.time()
 
     # ─── 长期记忆 ────────────────────────────────────
