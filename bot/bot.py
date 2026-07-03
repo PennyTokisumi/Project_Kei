@@ -43,6 +43,7 @@ def main():
     nonebot.load_plugin("plugins.monitor")
     nonebot.load_plugin("plugins.admin")
     nonebot.load_plugin("plugins.llm_chat")
+    nonebot.load_plugin("plugins.agent")
 
     nonebot.run()
 

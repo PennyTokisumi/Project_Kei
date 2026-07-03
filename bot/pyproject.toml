@@ -1,6 +1,6 @@
 [project]
 name = "Project_Kei"
-version = "1.9.10"
+version = "2.0.0"
 description = "Project Kei - QQ Bot"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,4 +15,4 @@ dependencies = [
 ]
 
 [tool.nonebot]
-plugins = ["bot.plugins.monitor", "bot.plugins.admin", "bot.plugins.llm_chat"]
+plugins = ["bot.plugins.monitor", "bot.plugins.admin", "bot.plugins.llm_chat", "bot.plugins.agent"]
