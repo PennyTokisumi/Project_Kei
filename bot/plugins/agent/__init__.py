@@ -433,18 +433,14 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
     sender_name = extract_user_name(event)
     msgs = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
 
-    # 1. 改写提醒内容（定时触发时发送的提醒消息本身）
+    # 1. 改写提醒内容（纯改写，不提定时器）
     kei_content = content
     if llm_client.available:
         ctx = msgs + [{
             "role": "system",
             "content": (
-                f"你刚刚设定了一个定时提醒：{time_str}后，提醒内容为「{content}」。\n"
-                "现在需要用 Kei 的语气写出这条提醒消息。\n"
-                "这是时间到了之后直接发给对方的提醒文本。\n"
-                "注意：是写提醒内容本身，不是确认收到指令。\n"
-                "不要说「计时器」「知道了」「设好了」之类的话。\n"
-                "简短（1句话），直接输出。"
+                f"用 Kei 的语气说出下面这句话：\n「{content}」\n\n"
+                "直接输出。"
             ),
         }]
         r = await llm_client.chat(messages=ctx, max_tokens=80)
