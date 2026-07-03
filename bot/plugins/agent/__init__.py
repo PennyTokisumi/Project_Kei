@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import random
 import re
 from datetime import datetime, timezone, timedelta
@@ -10,6 +11,8 @@ from nonebot import get_bot, get_driver, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot
 
 from config import config, PROJECT_ROOT
+
+_logger = logging.getLogger(__name__)
 
 from .database import (
     init_agent_db,
@@ -254,6 +257,11 @@ async def agent_loop(
     """工具调用循环。返回最终文本回复。"""
     from plugins.llm_chat.client import llm_client
 
+    _logger.info(
+        f"[Agent] agent_loop 被调用: messages={len(messages)}, "
+        f"tools={len(tools)}, group={group_id}"
+    )
+
     async def _dispatch(name: str, args: dict) -> str:
         if name == "delegate_to_claude":
             return await _execute_delegate_to_claude(
@@ -289,6 +297,10 @@ async def agent_loop(
 
         tool_calls = result.get("tool_calls")
         if not tool_calls:
+            _logger.info(
+                f"[Agent] 无 tool_calls，直接返回文本回复: "
+                f"{(result.get('content') or '')[:100]}"
+            )
             return (result.get("content") or "").strip()
 
         # 追加 assistant 消息（含 tool_calls）

@@ -79,6 +79,8 @@ def _setup_log_file():
     # 加到根 logger，捕获所有模块的日志
     root = logging.getLogger()
     root.addHandler(handler)
+    # nonebot logger 可能不 propagate，直接加 handler
+    logging.getLogger("nonebot").addHandler(handler)
     print(f"日志文件: {log_path}")
 
 

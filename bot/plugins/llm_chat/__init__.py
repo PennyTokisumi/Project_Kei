@@ -780,7 +780,13 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
 
     _msgs.append({
         "role": "system",
-        "content": "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。如果积压了多条用户消息，综合回复即可。"
+        "content": (
+            "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。"
+            "如果积压了多条用户消息，综合回复即可。\n"
+            "你有可用的工具（delegate_to_claude / schedule_message / remember）。"
+            "当用户要求搜索最新信息、查天气新闻、设定提醒、记住内容时，"
+            "必须真正调用工具，不要用文字模拟执行结果。"
+        )
     })
 
     reply = await agent_loop(
