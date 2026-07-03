@@ -371,7 +371,19 @@ def get_tools(sender_qq: int) -> list[dict]:
 def _claude_rule(event: GroupMessageEvent) -> bool:
     return event.get_plaintext().strip().lower().startswith("claude")
 
-claude_cmd = on_message(rule=to_me() & Rule(_claude_rule), priority=3, block=True)
+def _llm_on_rule(event: GroupMessageEvent) -> bool:
+    """Claude 指令也要求 LLM 已开启"""
+    from ..monitor.database import get_setting
+    if not event.group_id:
+        return False
+    if event.user_id == event.self_id:
+        return False
+    return get_setting(f"llm_enabled_{event.group_id}", "0") == "1"
+
+claude_cmd = on_message(
+    rule=to_me() & Rule(_claude_rule) & Rule(_llm_on_rule),
+    priority=3, block=True,
+)
 
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
@@ -396,16 +408,26 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     # 1. 获取 Claude 的原始结果
     claude_raw = await _execute_delegate_to_claude(task, event.group_id, bot)
 
-    # 2. Kei 用自己的语气转述 Claude 的结果
+    if claude_raw.startswith("[Claude"):
+        # Claude 出错（超时/无法连接/错误），直接返回
+        await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
+        return
+
+    # 2. Kei 分两步回复：先复述需求，再转述结果
     sender_name = extract_user_name(event)
     context = mem_mgr.build_context(event.group_id, task, sender_name, event.time)
     context.append({
         "role": "system",
         "content": (
-            "刚才你请 Claude 先生帮忙处理了一个任务。以下是 Claude 给你的回复。\n"
-            "请用 Kei 的语气，把 Claude 的信息转述给老师。\n"
-            "保持 Kei 的风格——傲娇、自然、简短（1-3句话），不要直接复制粘贴Claude的原文。\n\n"
-            f"【Claude的回复】\n{claude_raw[:3000]}"
+            "刚才你请 Claude 先生帮忙处理了老师的一个任务。"
+            "现在需要你向老师汇报结果。\n\n"
+            "请分两步回复，用 [SEP] 分隔：\n"
+            "第一步：用 Kei 的语气复述一下老师让你查了什么，让老师知道你理解了需求。"
+            "要自然，不要像机器人一样复读。\n"
+            "第二步：转述 Claude 查到的结果，用自己的语气，保持 Kei 的傲娇风格，"
+            "不要直接复制粘贴 Claude 的原文。\n\n"
+            f"【老师的需求】{task}\n\n"
+            f"【Claude 的回复】\n{claude_raw[:3000]}"
         ),
     })
 
@@ -417,12 +439,23 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
         return
 
     result = await llm_client.chat(messages=context, max_tokens=512)
-    kei_reply = (result.get("content") or claude_raw[:2000]).strip()
+    kei_reply = (result.get("content") or "").strip()
 
-    if len(kei_reply) > 2000:
-        kei_reply = kei_reply[:2000] + "\n\n[结果过长，已截断]"
+    if not kei_reply:
+        await claude_cmd.finish(Message("……"), at_sender=True)
+        return
 
-    await claude_cmd.finish(Message(f"\n{kei_reply}"), at_sender=True)
+    # 按 [SEP] 分割，逐条发送
+    segments = [s.strip() for s in kei_reply.split("[SEP]")]
+    segments = [s for s in segments if s]
+    for i, seg in enumerate(segments[:3]):  # 最多 3 段
+        if len(seg) > 2000:
+            seg = seg[:2000] + "\n\n[结果过长，已截断]"
+        await bot.send_group_msg(group_id=event.group_id, message=Message(seg))
+        if i < len(segments[:3]) - 1:
+            await asyncio.sleep(0.5)
+
+    return  # 消息已在上方逐条发出
 
 
 # ══════════════════════════════════════════════════════
