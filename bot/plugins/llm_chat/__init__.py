@@ -25,7 +25,7 @@ from .database import (
 
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name, get_reply_text
+from .utils import extract_text, extract_user_name, get_reply_text, has_image
 
 driver = get_driver()
 
@@ -751,6 +751,8 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     """@Kei 消息在 KEI ON 的群 → LLM 自然回复"""
     if _is_dup(event):
         return
+    if has_image(event):
+        return
     gid = event.group_id
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
@@ -792,6 +794,8 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
 async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     """自由聊天：消息进入缓冲区，批量后 Kei 自主判断是否发言"""
     if _is_dup(event):
+        return
+    if has_image(event):
         return
     gid = event.group_id
     msg_text = extract_text(event)

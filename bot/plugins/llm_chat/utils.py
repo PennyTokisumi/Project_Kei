@@ -3,6 +3,14 @@
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
 
+def has_image(event: GroupMessageEvent) -> bool:
+    """检查消息是否包含图片"""
+    for seg in event.message:
+        if seg.type == "image":
+            return True
+    return False
+
+
 async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
     """获取被回复消息的发送者名和文本内容，返回格式: \"原发送者: 原消息\"。bot 为 None 时返回空。"""
     for seg in event.message:
