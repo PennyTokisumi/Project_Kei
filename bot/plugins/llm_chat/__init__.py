@@ -759,15 +759,6 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 
-    # 诊断：直接写文件
-    try:
-        (config.DATA_DIR / ".handle_llm_at_diag").write_text(
-            f"handle_llm_at called\nsender={event.user_id}\nmsg={msg_text[:200]}\n"
-            f"group={gid}\n"
-        )
-    except Exception:
-        pass
-
     # 被回复消息的内容注入（SnowLuma event.reply）
     reply_text = await get_reply_text(event, bot)
     if reply_text:
@@ -831,15 +822,6 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     if has_image(event):
         return
     gid = event.group_id
-
-    # 诊断
-    try:
-        (config.DATA_DIR / ".free_chat_diag").write_text(
-            f"free_chat called\nsender={event.user_id}\nmsg={extract_text(event)[:200]}\n"
-            f"group={gid}\n"
-        )
-    except Exception:
-        pass
     msg_text = extract_text(event)
     sender_name = extract_user_name(event)
 

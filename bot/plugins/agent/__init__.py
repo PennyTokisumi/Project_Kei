@@ -275,15 +275,6 @@ async def agent_loop(
     """工具调用循环。返回最终文本回复。"""
     from plugins.llm_chat.client import llm_client
 
-    # 诊断：直接写文件绕过日志系统
-    try:
-        (config.DATA_DIR / ".agent_diag").write_text(
-            f"agent_loop called\nmessages={len(messages)}\ntools={len(tools)}\n"
-            f"group={group_id}\ntool_names={[t['function']['name'] for t in tools]}\n"
-        )
-    except Exception:
-        pass
-
     _logger.info(
         f"[Agent] agent_loop 被调用: messages={len(messages)}, "
         f"tools={len(tools)}, group={group_id}"
