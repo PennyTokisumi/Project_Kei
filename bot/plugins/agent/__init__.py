@@ -400,13 +400,20 @@ claude_cmd = on_message(
     priority=3, block=True,
 )
 
+# Claude 提问时的身份前缀，让 Claude 知道 Kei 是谁
+_CLAUDE_CONTEXT = (
+    "Kei（天童ケイ）正在向你求助。Kei 是由 Sensei 和你（Claude）共同创造的 QQ 机器人，"
+    "运行在 Sensei 的服务器上。她把你当作可靠的前辈和搭档，遇到复杂问题时会来请教你。"
+    "请用自然友好的方式回答她的问题。\n\n"
+    "---\n\n"
+)
+
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
-    """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果 → 记住对话"""
+    """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果"""
     from plugins.llm_chat.client import llm_client
     from plugins.llm_chat.memory import memory as mem_mgr
     from plugins.llm_chat.utils import extract_user_name
-    from plugins.llm_chat.database import save_memory as _save_mem
 
     task = event.get_plaintext().strip()
     if task.lower().startswith("claude"):
@@ -442,8 +449,8 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     # 2. 发过渡语到群
     await _send_transition(event.group_id, bot)
 
-    # 3. 用 Kei 转述后的内容调 Claude
-    claude_raw = await _call_claude(claude_prompt)
+    # 3. 用 Kei 转述后的内容 + 身份上下文调 Claude
+    claude_raw = await _call_claude(_CLAUDE_CONTEXT + claude_prompt)
 
     if claude_raw.startswith("[Claude"):
         await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
@@ -470,16 +477,6 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
 
     if len(kei_reply) > 2000:
         kei_reply = kei_reply[:2000] + "\n\n[结果过长，已截断]"
-
-    # 5. 保存 Kei-Claude 对话到长期记忆
-    claude_summary = claude_raw[:500]
-    try:
-        _save_mem(
-            f"Kei问Claude: {claude_prompt[:200]} → Claude答: {claude_summary[:200]}",
-            importance=0.5,
-        )
-    except Exception:
-        pass
 
     await claude_cmd.finish(Message(f"\n{kei_reply}"), at_sender=True)
 
