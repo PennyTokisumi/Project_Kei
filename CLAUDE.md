@@ -1,6 +1,6 @@
 # Project Kei — QQ Bot
 
-基于 **NapCatQQ** + **NoneBot2** 的 QQ 群机器人，监控 B站动态/直播 和 斗鱼直播，推送通知到 QQ 群，接入LLM实现对话。
+基于 **SnowLuma** + **NoneBot2** 的 QQ 群机器人，监控 B站动态/直播 和 斗鱼直播，推送通知到 QQ 群，接入LLM实现对话。
 
 ## 项目路径
 
@@ -12,7 +12,7 @@ H:\Agent\Project\Project_Kei\
 
 | 组件 | 用途 |
 |------|------|
-| NapCatQQ | QQ 协议桥，OneBot WebSocket 服务端 (`:8080`) |
+| SnowLuma | QQ 协议框架，OneBot WebSocket 服务端 (`:8080`) + WebUI (`:5100`) |
 | NoneBot2 | Python 异步机器人框架，OneBot 客户端 |
 | APScheduler | 定时轮询调度 |
 | SQLite | 去重记录 + 直播状态 + 设置持久化 |
@@ -25,7 +25,7 @@ H:\Agent\Project\Project_Kei\
 ```
 Project_Kei/
 ├── CLAUDE.md              # ← 本文件
-├── start.bat              # 一键启动脚本（NapCat → NoneBot）
+├── start.bat              # 一键启动脚本（SnowLuma → NoneBot）
 ├── .gitignore
 ├── bot/                   # 主应用包
 │   ├── bot.py             # NoneBot 入口
@@ -47,19 +47,20 @@ Project_Kei/
 │   │   │       ├── bilibili_dynamic.py
 │   │   │       ├── bilibili_live.py
 │   │   │       └── douyu_live.py
-│   │   └── admin/
-│   │       ├── __init__.py
-│   │       └── commands.py    # add/list/remove/status/hello/help
+│   │   ├── admin/
+│   │   │   ├── __init__.py
+│   │   │   └── commands.py    # add/list/remove/status/hello/help
+│   │   └── llm_chat/          # LLM 群聊插件
 │   └── utils/
 │       └── wbi.py             # B站 WBI 签名
-├── tests/                     # pytest 测试套件（43 测试）
+├── tests/                     # pytest 测试套件（63 测试）
 │   ├── conftest.py
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
 │   ├── test_douyu_live.py
 │   ├── test_formatter.py
 │   └── test_wbi.py
-└── napcat/                    # NapCatQQ 安装（不纳入 git）
+└── snowluma/                  # SnowLuma 安装（不纳入 git）
 ```
 
 ## 关键设计决策
@@ -126,6 +127,6 @@ cd bot
 消息风格偏中文/日语双语，以简体中文为主。可以夹杂部分简单常用的日语，比如二次元动画游戏中常见的，或者日常会话中常用的，但主体使用中文回复。
 
 ## 当前状态
-- **版本**：v1.7.1
-- **测试**：43 passed, 全部通过
-- **功能**：B站全类型动态 + B站直播 + 斗鱼直播，接入LLM实现日常对话，长期记忆。
+- **版本**：v1.9.10
+- **测试**：63 passed, 全部通过
+- **功能**：B站全类型动态 + B站直播 + 斗鱼直播，接入LLM（DeepSeek/Gemini 双供应商）实现日常对话，长期记忆 + 短期记忆，消息缓冲批量处理，多群管理，回复引用理解。
