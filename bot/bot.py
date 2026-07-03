@@ -1,7 +1,11 @@
 """QQ 群监测机器人 - NoneBot2 启动入口"""
 
+import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 import nonebot
 from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
 
@@ -39,12 +43,43 @@ def main():
     driver = nonebot.get_driver()
     driver.register_adapter(OneBotV11Adapter)
 
+    # 配置文件日志（RotatingFileHandler，单文件 1MB，保留 3 个备份）
+    _setup_log_file()
+
     # 加载插件
     nonebot.load_plugin("plugins.monitor")
     nonebot.load_plugin("plugins.admin")
     nonebot.load_plugin("plugins.llm_chat")
+    nonebot.load_plugin("plugins.agent")
 
     nonebot.run()
+
+
+def _setup_log_file():
+    """配置文件日志输出，相对于 PROJECT_ROOT 解析路径"""
+    import config
+    if not config.config.log_file:
+        return
+
+    log_path = Path(config.config.log_file)
+    if not log_path.is_absolute():
+        log_path = config.PROJECT_ROOT / log_path
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        str(log_path), maxBytes=1 * 1024 * 1024, backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setLevel(getattr(logging, config.config.log_level.upper(), logging.INFO))
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+
+    # 加到根 logger，捕获所有模块的日志
+    root = logging.getLogger()
+    root.addHandler(handler)
+    print(f"日志文件: {log_path}")
 
 
 if __name__ == "__main__":

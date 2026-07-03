@@ -27,6 +27,7 @@ class Config(BaseSettings):
 
     # 日志
     log_level: str = Field(default="INFO")
+    log_file: str = Field(default="", description="日志文件路径，如 data/kei.log，留空则不输出文件")
 
     # LLM
     llm_provider: str = Field(default="deepseek", description="LLM 供应商: deepseek / gemini")
@@ -35,6 +36,9 @@ class Config(BaseSettings):
     gemini_api_key: str = Field(default="", description="Gemini API Key")
     gemini_model: str = Field(default="gemini-2.5-flash", description="Gemini 模型名")
     llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
+
+    # Agent
+    agent_max_iterations: int = Field(default=5, description="Agent 工具调用最大轮数")
 
     @property
     def llm_api_key(self) -> str:
