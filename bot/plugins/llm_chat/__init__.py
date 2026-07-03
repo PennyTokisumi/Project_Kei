@@ -767,35 +767,17 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
 
     _msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
-    from plugins.agent import agent_loop, get_tools
-    from plugins.agent.tools import SENSEI_QQ, PUBLIC_USER_SYSTEM_PROMPT
-
-    sender_qq = event.user_id
-    is_sensei = str(sender_qq) == str(SENSEI_QQ)
-
-    tools = get_tools(sender_qq)
-
-    if not is_sensei:
-        _msgs.append({
-            "role": "system",
-            "content": PUBLIC_USER_SYSTEM_PROMPT,
-        })
 
     _msgs.append({
         "role": "system",
         "content": (
             "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。"
-            "如果积压了多条用户消息，综合回复即可。\n"
-            "你有可用的工具（delegate_to_claude / schedule_message / remember）。"
-            "当用户要求搜索最新信息、查天气新闻、设定提醒、记住内容时，"
-            "必须真正调用工具，不要用文字模拟执行结果。"
+            "如果积压了多条用户消息，综合回复即可。"
         )
     })
 
-    reply = await agent_loop(
-        messages=_msgs, tools=tools, group_id=gid, bot=bot,
-    )
-    reply = reply.strip()
+    result = await llm_client.chat(messages=_msgs, max_tokens=512)
+    reply = (result.get("content") or "").strip()
 
     if not reply:
         reply = "……"

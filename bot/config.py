@@ -36,9 +36,6 @@ class Config(BaseSettings):
     gemini_model: str = Field(default="gemini-2.5-flash", description="Gemini 模型名")
     llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
 
-    # Agent
-    agent_max_iterations: int = Field(default=5, description="Agent 工具调用最大轮数")
-
     @property
     def llm_api_key(self) -> str:
         return self.gemini_api_key if self.llm_provider == "gemini" else self.deepseek_api_key

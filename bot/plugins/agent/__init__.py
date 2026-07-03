@@ -1,8 +1,6 @@
-"""Agent 插件 — Claude Code 集成：agent_loop + 工具执行 + 生命周期"""
+"""Agent 插件 — Claude Code 集成 + 定时消息"""
 
 import asyncio
-import json
-import logging
 import random
 import re
 import shutil
@@ -12,9 +10,7 @@ from nonebot import get_bot, get_driver, on_message, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import to_me, Rule
 
-from config import config, PROJECT_ROOT
-
-_logger = logging.getLogger(__name__)
+from config import PROJECT_ROOT
 
 from .database import (
     init_agent_db,
@@ -22,7 +18,8 @@ from .database import (
     mark_sent,
     save_scheduled_message,
 )
-from .tools import build_tools, SENSEI_QQ, PUBLIC_USER_SYSTEM_PROMPT
+
+SENSEI_QQ = 823262716
 
 
 # ══════════════════════════════════════════════════════
@@ -181,22 +178,6 @@ async def _send_transition(group_id: int, bot: Bot):
         pass
 
 
-async def _execute_delegate_to_claude(task: str, group_id: int, bot: Bot) -> str:
-    """发自然过渡语 → 调 claude -p → 返回截断后的结果（agent_loop 用）"""
-    await _send_transition(group_id, bot)
-    return await _call_claude(task)
-
-
-async def _execute_remember(content: str, importance: float = 0.6) -> str:
-    """写入长期记忆"""
-    from plugins.llm_chat.database import save_memory as _save
-    content = content.strip()
-    if not content:
-        return "[remember: 内容为空]"
-    _save(content, importance)
-    return f"已记住: {content}"
-
-
 async def _execute_schedule_message(
     content: str, time_str: str, group_id: int,
     at_user: str | None = None,
@@ -267,116 +248,6 @@ async def _send_scheduled_callback(
 
     mark_sent(msg_id)
     nb_logger.info(f"[Agent] 定时消息已发送 [id={msg_id}] group={group_id}")
-
-
-# ══════════════════════════════════════════════════════
-#  Agent Loop
-# ══════════════════════════════════════════════════════
-
-async def agent_loop(
-    messages: list[dict],
-    tools: list[dict],
-    group_id: int,
-    bot: Bot,
-) -> str:
-    """工具调用循环。返回最终文本回复。"""
-    from plugins.llm_chat.client import llm_client
-
-    _logger.info(
-        f"[Agent] agent_loop 被调用: messages={len(messages)}, "
-        f"tools={len(tools)}, group={group_id}"
-    )
-
-    async def _dispatch(name: str, args: dict) -> str:
-        if name == "delegate_to_claude":
-            return await _execute_delegate_to_claude(
-                args.get("task", ""), group_id, bot,
-            )
-        elif name == "remember":
-            return await _execute_remember(
-                args.get("content", ""),
-                float(args.get("importance", 0.6)),
-            )
-        elif name == "schedule_message":
-            return await _execute_schedule_message(
-                args.get("content", ""),
-                args.get("time", ""),
-                group_id,
-                args.get("at_user"),
-            )
-        else:
-            return f"[未知工具: {name}]"
-
-    max_iter = config.agent_max_iterations
-
-    for _ in range(max_iter):
-        result = await llm_client.chat(
-            messages=messages,
-            tools=tools,
-            max_tokens=512,
-        )
-
-        if result.get("error"):
-            nb_logger.error(f"[Agent] LLM 错误: {result['error']}")
-            return (result.get("content") or "") or "……"
-
-        tool_calls = result.get("tool_calls")
-        if not tool_calls:
-            _logger.info(
-                f"[Agent] 无 tool_calls，直接返回文本回复: "
-                f"{(result.get('content') or '')[:100]}"
-            )
-            return (result.get("content") or "").strip()
-
-        # 追加 assistant 消息（含 tool_calls）
-        messages.append({
-            "role": "assistant",
-            "content": result.get("content") or "",
-            "tool_calls": tool_calls,
-        })
-
-        # 执行每个工具调用
-        for tc in tool_calls:
-            func_info = tc.get("function", {})
-            tool_name = func_info.get("name", "")
-            tool_args_str = func_info.get("arguments", "{}")
-
-            try:
-                tool_args = json.loads(tool_args_str)
-            except json.JSONDecodeError:
-                tool_result = f"[工具参数解析错误: {tool_args_str[:200]}]"
-                nb_logger.warning(
-                    f"[Agent] JSON 解析失败 [{tool_name}]: {tool_args_str[:200]}"
-                )
-            else:
-                nb_logger.info(
-                    f"[Agent] 调用工具 [{tool_name}]: {str(tool_args)[:200]}"
-                )
-                try:
-                    tool_result = await _dispatch(tool_name, tool_args)
-                except Exception as e:
-                    nb_logger.error(f"[Agent] 工具执行错误 [{tool_name}]: {e}")
-                    tool_result = f"[工具执行错误: {e}]"
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": tool_result[:_MAX_TOOL_RESULT_CHARS],
-            })
-
-    # 最大轮数耗尽 → 强制文本回复
-    nb_logger.warning(f"[Agent] 达到最大轮数 {max_iter}，强制文本回复")
-    result = await llm_client.chat(messages=messages, max_tokens=512)
-    return (result.get("content") or "").strip()
-
-
-# ══════════════════════════════════════════════════════
-#  对外接口
-# ══════════════════════════════════════════════════════
-
-def get_tools(sender_qq: int) -> list[dict]:
-    """根据发送者 QQ 号获取对应的工具列表"""
-    return build_tools(sender_qq)
 
 
 # ══════════════════════════════════════════════════════
