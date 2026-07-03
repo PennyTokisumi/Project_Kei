@@ -556,22 +556,25 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
 
     nb_logger.info(f"[Agent] @Kei remind: time={time_str} content={content[:100]}")
 
-    # 用 Kei 的语气改写提醒内容（LLM 可用时）
+    # 构建上下文（与普通 @Kei 一致，含 persona + 长期记忆 + 短期记忆）
+    from plugins.llm_chat.memory import memory as mem_mgr
+    from plugins.llm_chat.utils import extract_user_name
+    sender_name = extract_user_name(event)
+    base_context = mem_mgr.build_context(event.group_id, text, sender_name, event.time)
+
+    # 改写提醒内容
     kei_content = content
     if llm_client.available:
-        rephrase_result = await llm_client.chat(
-            messages=[{
-                "role": "system",
-                "content": (
-                    "你是 Kei（天童ケイ），傲娇的 AI 少女。"
-                    "有人设了一个提醒，你需要用自己的语气把提醒内容改写一下。\n"
-                    f"原始内容: {content}\n"
-                    "改写成 Kei 会用的语气，简短自然（1句话），不要加引号。"
-                ),
-            }],
-            max_tokens=100,
-        )
-        rephrased = (rephrase_result.get("content") or "").strip()
+        ctx = base_context + [{
+            "role": "system",
+            "content": (
+                f"有人设了一个定时提醒，内容是「{content}」。"
+                "请用自己的语气把这条提醒改写成 Kei 会说的话。"
+                "简短自然（1句话），不要加引号。直接输出改写后的内容。"
+            ),
+        }]
+        r = await llm_client.chat(messages=ctx, max_tokens=100)
+        rephrased = (r.get("content") or "").strip()
         if rephrased:
             kei_content = rephrased
 
@@ -582,22 +585,18 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
         at_user=str(event.user_id),
     )
 
-    # 用 Kei 的语气确认
+    # 确认回复（也用完整上下文）
     kei_confirm = f"嗯，{time_str}我会提醒你的。"
     if llm_client.available:
-        confirm_result = await llm_client.chat(
-            messages=[{
-                "role": "system",
-                "content": (
-                    "你是 Kei（天童ケイ），傲娇的 AI 少女。"
-                    "有人设了一个定时提醒，你需要用 Kei 的语气确认一下。\n"
-                    f"时间: {time_str}\n内容: {content}\n"
-                    "用 Kei 的傲娇风格回复，1句话。"
-                ),
-            }],
-            max_tokens=100,
-        )
-        confirm = (confirm_result.get("content") or "").strip()
+        ctx = base_context + [{
+            "role": "system",
+            "content": (
+                f"有人设定了一个定时提醒：时间={time_str}，内容={content}。"
+                "请以 Kei 的身份用傲娇的语气确认一下，1句话。直接输出。"
+            ),
+        }]
+        r = await llm_client.chat(messages=ctx, max_tokens=100)
+        confirm = (r.get("content") or "").strip()
         if confirm:
             kei_confirm = confirm
 
