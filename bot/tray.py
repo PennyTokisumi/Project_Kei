@@ -217,6 +217,12 @@ class TrayIcon:
         except Exception:
             pass
         _kill_snowluma()
+        # 清理 pid 文件，避免重启时误判"已在运行"
+        try:
+            import config
+            (config.DATA_DIR / ".pid").unlink(missing_ok=True)
+        except Exception:
+            pass
         os._exit(0)
 
 
