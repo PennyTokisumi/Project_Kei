@@ -56,14 +56,14 @@ def main():
 
 
 def _setup_log_file():
-    """配置文件日志输出"""
+    """配置文件日志输出，相对于 PROJECT_ROOT 解析路径"""
     import config
     if not config.config.log_file:
         return
 
     log_path = Path(config.config.log_file)
     if not log_path.is_absolute():
-        log_path = config.DATA_DIR / log_path
+        log_path = config.PROJECT_ROOT / log_path
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     handler = RotatingFileHandler(
