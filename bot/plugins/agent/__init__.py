@@ -7,8 +7,9 @@ import random
 import re
 from datetime import datetime, timezone, timedelta
 
-from nonebot import get_bot, get_driver, logger as nb_logger
-from nonebot.adapters.onebot.v11 import Bot
+from nonebot import get_bot, get_driver, on_message, logger as nb_logger
+from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
+from nonebot.rule import to_me, Rule
 
 from config import config, PROJECT_ROOT
 
@@ -361,6 +362,39 @@ async def agent_loop(
 def get_tools(sender_qq: int) -> list[dict]:
     """根据发送者 QQ 号获取对应的工具列表"""
     return build_tools(sender_qq)
+
+
+# ══════════════════════════════════════════════════════
+#  @Kei Claude — 直接调用 Claude Code
+# ══════════════════════════════════════════════════════
+
+def _claude_rule(event: GroupMessageEvent) -> bool:
+    return event.get_plaintext().strip().lower().startswith("claude")
+
+claude_cmd = on_message(rule=to_me() & Rule(_claude_rule), priority=3, block=True)
+
+@claude_cmd.handle()
+async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
+    """@Kei Claude <任务> — 直接调用 Claude Code，不经过 agent_loop"""
+    task = event.get_plaintext().strip()
+    # 去掉 "Claude" 前缀（大小写不敏感）
+    if task.lower().startswith("claude"):
+        task = task[6:].strip()  # "Claude" = 6 chars
+
+    if not task:
+        await claude_cmd.finish(
+            Message("格式: @Kei Claude <任务描述>\n示例: @Kei Claude 帮我查一下明天杭州的天气"),
+            at_sender=True,
+        )
+
+    nb_logger.info(f"[Agent] @Kei Claude 指令: {task[:200]}")
+
+    result = await _execute_delegate_to_claude(task, event.group_id, bot)
+
+    # QQ 消息长度限制，截断到 2000 字符
+    if len(result) > 2000:
+        result = result[:2000] + "\n\n[结果过长，已截断]"
+    await claude_cmd.finish(Message(f"\n{result}"), at_sender=True)
 
 
 # ══════════════════════════════════════════════════════
