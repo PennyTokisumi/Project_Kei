@@ -767,6 +767,18 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
 
     # 转发/合并消息的内容注入
     forward_text = await get_forward_text(event, bot)
+    # DEBUG: 记录 segment 类型到文件
+    try:
+        seg_types = [str(seg.type) for seg in event.message]
+        fwd_attr = hasattr(event, "forward")
+        from config import DATA_DIR
+        (DATA_DIR / ".forward_debug").write_text(
+            f"seg_types={seg_types}\nfwd_attr={fwd_attr}\n"
+            f"forward_text={'EMPTY' if not forward_text else forward_text[:500]}\n"
+            f"msg_text={msg_text[:200]}\n",
+        )
+    except Exception:
+        pass
     if forward_text:
         msg_text = f"[转发内容:\n{forward_text}\n] {msg_text}"
 
