@@ -1,7 +1,6 @@
 """LLM Chat 插件 — 消息解析工具"""
 
 import json as _json
-from pathlib import Path as _Path
 
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
@@ -15,7 +14,8 @@ def __json_dumps(obj) -> str:
 
 def _write_fwd_debug(text: str):
     try:
-        (_Path("data") / ".fwd_debug").write_text(text, encoding="utf-8")
+        from config import DATA_DIR
+        (DATA_DIR / ".fwd_debug").write_text(text, encoding="utf-8")
     except Exception:
         pass
 
