@@ -1,6 +1,23 @@
 """LLM Chat 插件 — 消息解析工具"""
 
+import json as _json
+from pathlib import Path as _Path
+
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
+
+
+def __json_dumps(obj) -> str:
+    try:
+        return _json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        return str(obj)
+
+
+def _write_fwd_debug(text: str):
+    try:
+        (_Path("data") / ".fwd_debug").write_text(text, encoding="utf-8")
+    except Exception:
+        pass
 
 
 def has_media(event: GroupMessageEvent) -> bool:
@@ -131,11 +148,12 @@ async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> 
     if "聊天记录" in msg_text or "合并" in msg_text:
         try:
             resp = await bot.call_api("get_forward_msg", id=str(event.message_id))
+            _write_fwd_debug(f"get_forward_msg OK: {_json_dumps(resp)[:2000]}")
             result = _parse_forward_response(resp)
             if result:
                 return result
-        except Exception:
-            pass
+        except Exception as e:
+            _write_fwd_debug(f"get_forward_msg FAIL: {e}")
 
     return ""
 
