@@ -147,6 +147,10 @@ def _parse_forward_response(resp: dict) -> str:
     for msg in messages:
         sender = msg.get("sender", {}) or {}
         name = sender.get("nickname", "") or sender.get("card", "") or ""
+        user_id = str(sender.get("user_id", ""))
+        # SnowLuma bug: 合并转发中 nickname/card 可能为空，用 QQ 号兜底
+        if not name or name == "QQ用户":
+            name = f"QQ{user_id}"
         content = msg.get("content", "") or msg.get("message", "")
         if isinstance(content, list):
             text = _segments_to_text(
