@@ -24,11 +24,7 @@ class Config(BaseSettings):
         description="B站 Cookie 字符串，如 buvid3=xxx; SESSDATA=xxx; 提高 API 稳定性",
     )
 
-    # 日志
-    log_level: str = Field(default="INFO")
-    log_file: str = Field(default="", description="日志文件路径，如 data/kei.log，留空则不输出文件")
-
-    # LLM
+# LLM
     llm_provider: str = Field(default="deepseek", description="LLM 供应商: deepseek / gemini")
     deepseek_api_key: str = Field(default="", description="DeepSeek API Key")
     deepseek_model: str = Field(default="deepseek-v4-flash", description="DeepSeek 模型名")
