@@ -14,10 +14,18 @@ def __json_dumps(obj) -> str:
 
 
 def _write_fwd_debug(text: str):
+    import traceback
     try:
-        _Path("H:/Agent/Project/Project_Kei/data/.fwd_debug").write_text(text, encoding="utf-8")
+        p = _Path("H:/Agent/Project/Project_Kei/data")
+        p.mkdir(parents=True, exist_ok=True)
+        (p / ".fwd_debug").write_text(text + "\n", encoding="utf-8")
     except Exception:
-        pass
+        try:
+            _Path("H:/Agent/Project/Project_Kei/data/.fwd_debug_err").write_text(
+                traceback.format_exc(), encoding="utf-8"
+            )
+        except Exception:
+            pass
 
 
 def has_media(event: GroupMessageEvent) -> bool:

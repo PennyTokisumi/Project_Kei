@@ -818,6 +818,11 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
+    # 转发/合并消息的内容注入
+    forward_text = await get_forward_text(event, bot)
+    if forward_text:
+        msg_text = f"[转发内容:\n{forward_text}\n] {msg_text}"
+
     # 放入缓冲区
     if gid not in _buffer:
         _buffer[gid] = []
