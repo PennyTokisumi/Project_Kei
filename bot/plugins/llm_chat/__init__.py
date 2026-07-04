@@ -444,8 +444,7 @@ async def handle_read(event: GroupMessageEvent, bot: Bot):
         await read_cmd.finish(Message(f"文件 '{filename}' 不存在或无法读取。\n请确保文件在 data/ 目录下。"))
         return
 
-    size_kb = len(content.encode("utf-8")) // 1024
-    await read_cmd.send(Message(f"已读取 {filename}（{size_kb}KB），正在分析..."))
+    await read_cmd.send(Message(f"已读取 {filename}，正在分析..."))
 
     # 1. 提取文件中的长期记忆
     extract_prompt = (

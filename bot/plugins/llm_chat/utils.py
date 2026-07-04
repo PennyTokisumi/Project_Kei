@@ -1,31 +1,6 @@
 """LLM Chat 插件 — 消息解析工具"""
 
-import json as _json
-from pathlib import Path as _Path
-
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
-
-
-def __json_dumps(obj) -> str:
-    try:
-        return _json.dumps(obj, ensure_ascii=False, indent=2, default=str)
-    except Exception:
-        return str(obj)
-
-
-def _write_fwd_debug(text: str):
-    import traceback
-    try:
-        p = _Path("H:/Agent/Project/Project_Kei/data")
-        p.mkdir(parents=True, exist_ok=True)
-        (p / ".fwd_debug").write_text(text + "\n", encoding="utf-8")
-    except Exception:
-        try:
-            _Path("H:/Agent/Project/Project_Kei/data/.fwd_debug_err").write_text(
-                traceback.format_exc(), encoding="utf-8"
-            )
-        except Exception:
-            pass
 
 
 def has_media(event: GroupMessageEvent) -> bool:
@@ -113,15 +88,13 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
 
 
 async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
-    """获取转发/合并消息的内容文本。"""
-    _write_fwd_debug(f"get_forward_text called, msg_id={event.message_id}")
-    if bot is None:
-        _write_fwd_debug("bot is None, return")
-        return ""
+    """获取转发/合并消息的内容文本。
 
-    # dump segment types
-    seg_info = [f"{getattr(s,'type','?')}:{str(getattr(s,'data',{}))[:80]}" for s in event.message]
-    _write_fwd_debug(f"segments: {seg_info}")
+    event.message 中的 forward 段（NoneBot 解析后）→ get_forward_msg，
+    或通过 get_msg 获取原始消息 → 找 forward 段 → get_forward_msg。
+    """
+    if bot is None:
+        return ""
 
     # 1. event.message 中的 forward 段
     for seg in event.message:
@@ -134,43 +107,23 @@ async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> 
                 except Exception:
                     pass
 
-    # 2. get_msg 完整消息中找 forward 段（SnowLuma 响应可能包在 data 里）
+    # 2. get_msg 完整消息中找 forward 段
     try:
         raw = await bot.call_api("get_msg", message_id=int(event.message_id))
-        _write_fwd_debug(f"get_msg raw keys: {list(raw.keys()) if isinstance(raw, dict) else type(raw)}")
-        # NoneBot 通常解包 data，但 SnowLuma 可能返回完整结构
         if isinstance(raw, dict):
             raw_msg = raw.get("message") or raw.get("data", {}).get("message", [])
         else:
             raw_msg = []
-        _write_fwd_debug(f"get_msg segments: {_json_dumps(raw_msg)[:1000]}")
         for seg in raw_msg:
             if isinstance(seg, dict) and seg.get("type") == "forward":
                 fwd_id = seg.get("data", {}).get("id", "")
-                _write_fwd_debug(f"found forward id: {fwd_id[:80]}")
                 if fwd_id:
                     resp = await bot.call_api("get_forward_msg", id=fwd_id)
                     result = _parse_forward_response(resp)
                     if result:
                         return result
-    except Exception as e:
-        _write_fwd_debug(f"get_msg FAIL: {e}")
-
-    # 3. SnowLuma: 合并转发消息 content 显示为 [聊天记录]，直接用 message_id
-    msg_text = ""
-    for seg in event.message:
-        t = getattr(seg, "type", "")
-        if t == "text":
-            msg_text += getattr(seg, "data", {}).get("text", "") if hasattr(seg, "data") else ""
-    if "聊天记录" in msg_text or "合并" in msg_text:
-        try:
-            resp = await bot.call_api("get_forward_msg", id=str(event.message_id))
-            _write_fwd_debug(f"get_forward_msg OK: {_json_dumps(resp)[:2000]}")
-            result = _parse_forward_response(resp)
-            if result:
-                return result
-        except Exception as e:
-            _write_fwd_debug(f"get_forward_msg FAIL: {e}")
+    except Exception:
+        pass
 
     return ""
 
