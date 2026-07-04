@@ -22,6 +22,7 @@ snowluma/
 
 # 聊天日志
 data/chatlogs/
+data/*.log
 data/*.txt
 data/*.bak
 
