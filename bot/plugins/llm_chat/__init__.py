@@ -48,9 +48,9 @@ _buffer: dict[int, list[dict]] = {}          # group_id → [{sender_name, msg_t
 _buffer_first_ts: dict[int, float] = {}       # 首条消息进入时间
 _buffer_tasks: dict[int, asyncio.Task] = {}
 _buffer_version: dict[int, int] = {}           # 版本号，防竞态
-IDLE_TIMEOUT = 5.0   # 空闲超时：最后一条消息后 5s 无新消息 → 刷新
-MAX_WAIT = 15.0      # 硬上限：第一条消息进入后 15s → 强制刷新
-MAX_BATCH = 10       # 数量上限：堆积 ≥ 10 条 → 立即刷新
+IDLE_TIMEOUT = 10.0  # 空闲超时：最后一条消息后 10s 无新消息 → 刷新
+MAX_WAIT = 20.0      # 硬上限：第一条消息进入后 20s → 强制刷新
+MAX_BATCH = 15       # 数量上限：堆积 ≥ 15 条 → 立即刷新
 
 
 def _should_flush(gid: int) -> bool:
