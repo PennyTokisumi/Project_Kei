@@ -59,6 +59,11 @@ async def _on_connect(bot: Bot):
                     group_id=gid,
                     message=MessageSegment.text(random.choice(STARTUP_MSGS)),
                 )
+                try:
+                    from plugins.llm_chat.memory import memory
+                    memory.add_assistant_message(gid, "[Kei上线了]")
+                except Exception:
+                    pass
                 nb_logger.info(f"上线通知已发送 [群{gid}]")
             except Exception as e:
                 nb_logger.error(f"上线通知发送失败 [群{gid}]: {e}")

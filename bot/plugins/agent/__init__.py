@@ -89,9 +89,7 @@ def _parse_time(time_str: str) -> str | None:
         hour = int(m.group(2))
         half = m.group(3) == '半'
 
-        if prefix in ('晚上',) and hour < 12:
-            hour += 12
-        elif prefix in ('下午',) and hour < 12:
+        if prefix in ('晚上', '下午', '中午') and hour < 12:
             hour += 12
 
         minute = 30 if half else 0
@@ -453,12 +451,15 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
         if rephrased:
             kei_content = rephrased
 
-    await _execute_schedule_message(
+    sched_result = await _execute_schedule_message(
         content=kei_content,
         time_str=time_str,
         group_id=event.group_id,
         at_user=str(event.user_id),
     )
+    if sched_result.startswith("[schedule_message:"):
+        await remind_cmd.finish(Message(f"\n{sched_result}"), at_sender=True)
+        return
 
     # 2. 确认回复（立即发给用户的确认）
     kei_confirm = f"嗯，{time_str}我会提醒你的。"

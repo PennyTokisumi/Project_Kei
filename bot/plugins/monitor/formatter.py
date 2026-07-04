@@ -98,6 +98,13 @@ async def send_live_notification(bot: Bot, group_id: int, item: Item):
     """发送直播开播提醒"""
     msg = build_live_message(item)
     await bot.send_group_msg(group_id=group_id, message=msg)
+    # 记录到短期记忆，让 Kei 能看到自己推送的内容
+    try:
+        from plugins.llm_chat.memory import memory
+        summary = f"[Kei推送了直播: {item.nickname} — {item.title}]"
+        memory.add_assistant_message(group_id, summary)
+    except Exception:
+        pass
 
 
 async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
@@ -114,3 +121,11 @@ async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
         group_id=group_id,
         messages=nodes,
     )
+    # 记录到短期记忆
+    try:
+        from plugins.llm_chat.memory import memory
+        titles = "、".join(it.title[:30] for it in items)
+        summary = f"[Kei推送了动态: {titles}]"
+        memory.add_assistant_message(group_id, summary)
+    except Exception:
+        pass

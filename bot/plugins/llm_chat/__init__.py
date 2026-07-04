@@ -25,7 +25,7 @@ from .database import (
 
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name, get_reply_text, has_image
+from .utils import extract_text, extract_user_name, get_reply_text, get_forward_text, has_media
 
 driver = get_driver()
 
@@ -114,13 +114,13 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
         "role": "system",
         "content": (
             "【指令】以上是最近堆积的群聊消息。请以 Kei 的身份自行判断是否回复。\n"
-            "大多数群聊消息与你无关，不要插话。只有遇到以下情况才回复：\n"
-            "1. 有人明确提到 Kei/ケイ/凯伊，或被点名\n"
-            "2. 话题涉及你感兴趣的领域（蔚蓝档案、ACG、编程、AI）且你有话想说\n"
-            "3. Sensei 在说话且你想回应\n"
-            "其他情况保持安静就好。如果决定不回复，回复 [PASS]。\n"
-            "如果回复涉及多个不同话题/对象，合在一条不自然时，"
-            "可用 [SEP] 分隔多条回复。能自然合为一条就合一条。"
+            "原则：沉默是默认状态。绝大多数消息都应该 [PASS]。\n"
+            "只在以下情况考虑回复（满足一条还不够，要你确实有话想说才回）：\n"
+            "1. 被点名 @Kei 或提到 Kei/ケイ/凯伊\n"
+            "2. 你真正感兴趣的话题（蔚蓝档案、ACG、编程、AI）且你有强烈想说的\n"
+            "3. Sensei 对你说话\n"
+            "注意：同一轮对话最多回复1条，别每句都接。\n"
+            "决定不回复 → [PASS]。多话题回复用 [SEP] 分隔。"
         )
     })
 
@@ -754,7 +754,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     """@Kei 消息在 KEI ON 的群 → LLM 自然回复"""
     if _is_dup(event):
         return
-    if has_image(event):
+    if has_media(event):
         return
     gid = event.group_id
     msg_text = extract_text(event)
@@ -764,6 +764,11 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     reply_text = await get_reply_text(event, bot)
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
+
+    # 转发/合并消息的内容注入
+    forward_text = await get_forward_text(event, bot)
+    if forward_text:
+        msg_text = f"[转发内容:\n{forward_text}\n] {msg_text}"
 
     msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
@@ -802,7 +807,7 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     """自由聊天：消息进入缓冲区，批量后 Kei 自主判断是否发言"""
     if _is_dup(event):
         return
-    if has_image(event):
+    if has_media(event):
         return
     gid = event.group_id
     msg_text = extract_text(event)

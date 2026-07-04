@@ -3,10 +3,10 @@
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
 
-def has_image(event: GroupMessageEvent) -> bool:
-    """检查消息是否包含图片"""
+def has_media(event: GroupMessageEvent) -> bool:
+    """检查消息是否包含图片或视频"""
     for seg in event.message:
-        if seg.type == "image":
+        if seg.type in ("image", "video"):
             return True
     return False
 
@@ -82,6 +82,42 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                     if sender_name and text:
                         return f"{sender_name}: {text}"
                     return text or ""
+                except Exception:
+                    pass
+    return ""
+
+
+async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
+    """获取转发/合并消息的内容文本。
+
+    OneBot v11: forward 段类型，通过 get_forward_msg API 获取内容。
+    """
+    for seg in event.message:
+        if seg.type == "forward":
+            fwd_id = seg.data.get("id", "")
+            if fwd_id and bot is not None:
+                try:
+                    resp = await bot.call_api("get_forward_msg", message_id=fwd_id)
+                    messages = resp.get("messages", []) if isinstance(resp, dict) else []
+                    parts = []
+                    for msg in messages:
+                        sender = msg.get("sender", {}) or {}
+                        name = sender.get("nickname", "") or sender.get("card", "") or ""
+                        content = msg.get("content", "")
+                        # content may be a list of segments
+                        if isinstance(content, list):
+                            text = _segments_to_text(
+                                content,
+                                lambda s: s.get("type", ""),
+                                lambda s: s.get("data", {}) or {},
+                            )
+                        else:
+                            text = str(content)
+                        if name and text:
+                            parts.append(f"{name}: {text}")
+                        elif text:
+                            parts.append(text)
+                    return "\n".join(parts)
                 except Exception:
                     pass
     return ""
