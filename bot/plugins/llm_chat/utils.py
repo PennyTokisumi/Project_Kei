@@ -90,66 +90,60 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
 async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
     """获取转发/合并消息的内容文本。
 
-    双路径：SnowLuma 直接提供 event.forward（类似 event.reply），
-    标准 OneBot 通过 get_forward_msg API 获取。
+    路径：
+    1. SnowLuma: event.message 中找 forward 段 + get_forward_msg API
+    2. 如果 event 直接显示 [聊天记录]，尝试 get_msg 拿到完整消息再解析
     """
-    # SnowLuma: event.forward 直接提供内容
-    ev_fwd = getattr(event, "forward", None)
-    if ev_fwd is not None:
-        try:
-            messages = getattr(ev_fwd, "messages", None)
-            if messages is None:
-                messages = ev_fwd if isinstance(ev_fwd, list) else [ev_fwd]
-            parts = []
-            for msg in messages:
-                name = getattr(getattr(msg, "sender", None), "nickname", "") or ""
-                content = getattr(msg, "content", "") or getattr(msg, "message", "")
-                if isinstance(content, list):
-                    text = _segments_to_text(
-                        content,
-                        lambda s: getattr(s, "type", ""),
-                        lambda s: getattr(s, "data", {}) or {},
-                    )
-                else:
-                    text = str(content)
-                if name and text:
-                    parts.append(f"{name}: {text}")
-                elif text:
-                    parts.append(text)
-            return "\n".join(parts)
-        except Exception:
-            pass
-        return ""
-
-    # 标准 OneBot: forward 段 + get_forward_msg API
+    # 先检查 event.message 中的 forward 段
     for seg in event.message:
         if seg.type == "forward":
-            fwd_id = seg.data.get("id", "")
+            fwd_id = seg.data.get("id", "") if hasattr(seg, "data") else ""
             if fwd_id and bot is not None:
                 try:
                     resp = await bot.call_api("get_forward_msg", id=fwd_id)
-                    messages = resp.get("messages", []) if isinstance(resp, dict) else []
-                    parts = []
-                    for msg in messages:
-                        sender = msg.get("sender", {}) or {}
-                        name = sender.get("nickname", "") or sender.get("card", "") or ""
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            text = _segments_to_text(
-                                content,
-                                lambda s: s.get("type", ""),
-                                lambda s: s.get("data", {}) or {},
-                            )
-                        else:
-                            text = str(content)
-                        if name and text:
-                            parts.append(f"{name}: {text}")
-                        elif text:
-                            parts.append(text)
-                    return "\n".join(parts)
+                    return _parse_forward_response(resp)
                 except Exception:
                     pass
+
+    # SnowLuma 可能把转发内容藏在完整消息里（event.message 被截断）
+    # 尝试 get_msg 获取原始消息
+    if bot is not None:
+        try:
+            raw = await bot.call_api("get_msg", message_id=int(event.message_id))
+            raw_msg = raw.get("message", []) if isinstance(raw, dict) else []
+            for seg in raw_msg:
+                if isinstance(seg, dict) and seg.get("type") == "forward":
+                    fwd_id = seg.get("data", {}).get("id", "")
+                    if fwd_id:
+                        resp = await bot.call_api("get_forward_msg", id=fwd_id)
+                        return _parse_forward_response(resp)
+        except Exception:
+            pass
+
     return ""
+
+
+def _parse_forward_response(resp: dict) -> str:
+    """解析 get_forward_msg 返回的 messages 数组"""
+    messages = resp.get("messages", []) if isinstance(resp, dict) else []
+    parts = []
+    for msg in messages:
+        sender = msg.get("sender", {}) or {}
+        name = sender.get("nickname", "") or sender.get("card", "") or ""
+        content = msg.get("content", "") or msg.get("message", "")
+        if isinstance(content, list):
+            text = _segments_to_text(
+                content,
+                lambda s: s.get("type", "") if isinstance(s, dict) else getattr(s, "type", ""),
+                lambda s: s.get("data", {}) if isinstance(s, dict) else (getattr(s, "data", {}) or {}),
+            )
+        else:
+            text = str(content)
+        if name and text:
+            parts.append(f"{name}: {text}")
+        elif text:
+            parts.append(text)
+    return "\n".join(parts)
 
 
 def extract_text(event: GroupMessageEvent) -> str:
