@@ -90,33 +90,50 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
 async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
     """获取转发/合并消息的内容文本。
 
-    路径：
-    1. SnowLuma: event.message 中找 forward 段 + get_forward_msg API
-    2. 如果 event 直接显示 [聊天记录]，尝试 get_msg 拿到完整消息再解析
+    路径（按优先级）：
+    1. event.message 中找 forward 段 → get_forward_msg
+    2. get_msg 完整消息中找 forward 段 → get_forward_msg
+    3. SnowLuma: 合并转发消息显示为 [聊天记录]，直接用 message_id 调 get_forward_msg
     """
-    # 先检查 event.message 中的 forward 段
+    if bot is None:
+        return ""
+
+    # 1. event.message 中的 forward 段
     for seg in event.message:
         if seg.type == "forward":
             fwd_id = seg.data.get("id", "") if hasattr(seg, "data") else ""
-            if fwd_id and bot is not None:
+            if fwd_id:
                 try:
                     resp = await bot.call_api("get_forward_msg", id=fwd_id)
                     return _parse_forward_response(resp)
                 except Exception:
                     pass
 
-    # SnowLuma 可能把转发内容藏在完整消息里（event.message 被截断）
-    # 尝试 get_msg 获取原始消息
-    if bot is not None:
+    # 2. get_msg 完整消息中找 forward 段
+    try:
+        raw = await bot.call_api("get_msg", message_id=int(event.message_id))
+        raw_msg = raw.get("message", []) if isinstance(raw, dict) else []
+        for seg in raw_msg:
+            if isinstance(seg, dict) and seg.get("type") == "forward":
+                fwd_id = seg.get("data", {}).get("id", "")
+                if fwd_id:
+                    resp = await bot.call_api("get_forward_msg", id=fwd_id)
+                    return _parse_forward_response(resp)
+    except Exception:
+        pass
+
+    # 3. SnowLuma: 合并转发消息 content 显示为 [聊天记录]，直接用 message_id
+    msg_text = ""
+    for seg in event.message:
+        t = getattr(seg, "type", "")
+        if t == "text":
+            msg_text += getattr(seg, "data", {}).get("text", "") if hasattr(seg, "data") else ""
+    if "聊天记录" in msg_text or "合并" in msg_text:
         try:
-            raw = await bot.call_api("get_msg", message_id=int(event.message_id))
-            raw_msg = raw.get("message", []) if isinstance(raw, dict) else []
-            for seg in raw_msg:
-                if isinstance(seg, dict) and seg.get("type") == "forward":
-                    fwd_id = seg.get("data", {}).get("id", "")
-                    if fwd_id:
-                        resp = await bot.call_api("get_forward_msg", id=fwd_id)
-                        return _parse_forward_response(resp)
+            resp = await bot.call_api("get_forward_msg", id=str(event.message_id))
+            result = _parse_forward_response(resp)
+            if result:
+                return result
         except Exception:
             pass
 
