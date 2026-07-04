@@ -126,18 +126,27 @@ async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> 
                 except Exception:
                     pass
 
-    # 2. get_msg 完整消息中找 forward 段
+    # 2. get_msg 完整消息中找 forward 段（SnowLuma 响应可能包在 data 里）
     try:
         raw = await bot.call_api("get_msg", message_id=int(event.message_id))
-        raw_msg = raw.get("message", []) if isinstance(raw, dict) else []
+        _write_fwd_debug(f"get_msg raw keys: {list(raw.keys()) if isinstance(raw, dict) else type(raw)}")
+        # NoneBot 通常解包 data，但 SnowLuma 可能返回完整结构
+        if isinstance(raw, dict):
+            raw_msg = raw.get("message") or raw.get("data", {}).get("message", [])
+        else:
+            raw_msg = []
+        _write_fwd_debug(f"get_msg segments: {_json_dumps(raw_msg)[:1000]}")
         for seg in raw_msg:
             if isinstance(seg, dict) and seg.get("type") == "forward":
                 fwd_id = seg.get("data", {}).get("id", "")
+                _write_fwd_debug(f"found forward id: {fwd_id[:80]}")
                 if fwd_id:
                     resp = await bot.call_api("get_forward_msg", id=fwd_id)
-                    return _parse_forward_response(resp)
-    except Exception:
-        pass
+                    result = _parse_forward_response(resp)
+                    if result:
+                        return result
+    except Exception as e:
+        _write_fwd_debug(f"get_msg FAIL: {e}")
 
     # 3. SnowLuma: 合并转发消息 content 显示为 [聊天记录]，直接用 message_id
     msg_text = ""
