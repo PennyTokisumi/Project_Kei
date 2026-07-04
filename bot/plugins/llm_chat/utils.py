@@ -168,8 +168,15 @@ async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> 
 
 
 def _parse_forward_response(resp: dict) -> str:
-    """解析 get_forward_msg 返回的 messages 数组"""
-    messages = resp.get("messages", []) if isinstance(resp, dict) else []
+    """解析 get_forward_msg 返回的 messages 数组。
+
+    兼容两种格式：
+    - NoneBot 解包: { messages: [...] }
+    - SnowLuma 原始: { data: { messages: [...] } }
+    """
+    if not isinstance(resp, dict):
+        return ""
+    messages = resp.get("messages") or resp.get("data", {}).get("messages", [])
     parts = []
     for msg in messages:
         sender = msg.get("sender", {}) or {}
@@ -177,7 +184,10 @@ def _parse_forward_response(resp: dict) -> str:
         user_id = str(sender.get("user_id", ""))
         # SnowLuma bug: 合并转发中 nickname/card 可能为空，用 QQ 号兜底
         if not name or name == "QQ用户":
-            name = f"QQ{user_id}"
+            if user_id:
+                name = f"QQ{user_id}"
+            else:
+                name = "未知用户"
         content = msg.get("content", "") or msg.get("message", "")
         if isinstance(content, list):
             text = _segments_to_text(
@@ -187,10 +197,11 @@ def _parse_forward_response(resp: dict) -> str:
             )
         else:
             text = str(content)
-        if name and text:
-            parts.append(f"{name}: {text}")
-        elif text:
-            parts.append(text)
+        if text:
+            if name:
+                parts.append(f"{name}: {text}")
+            else:
+                parts.append(text)
     return "\n".join(parts)
 
 
