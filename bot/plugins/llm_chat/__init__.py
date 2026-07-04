@@ -765,11 +765,6 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
-    # 转发/合并消息的内容注入
-    forward_text = await get_forward_text(event, bot)
-    if forward_text:
-        msg_text = f"[转发内容:\n{forward_text}\n] {msg_text}"
-
     msgs = memory.build_context(gid, msg_text, sender_name, event.time)
     memory.add_message(gid, sender_name, msg_text, event.time)
 
