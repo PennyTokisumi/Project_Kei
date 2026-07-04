@@ -1,6 +1,7 @@
 """LLM Chat 插件 — 消息解析工具"""
 
 import json as _json
+from pathlib import Path as _Path
 
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
@@ -14,8 +15,7 @@ def __json_dumps(obj) -> str:
 
 def _write_fwd_debug(text: str):
     try:
-        from config import DATA_DIR
-        (DATA_DIR / ".fwd_debug").write_text(text, encoding="utf-8")
+        _Path("H:/Agent/Project/Project_Kei/data/.fwd_debug").write_text(text, encoding="utf-8")
     except Exception:
         pass
 
@@ -105,15 +105,15 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
 
 
 async def get_forward_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
-    """获取转发/合并消息的内容文本。
-
-    路径（按优先级）：
-    1. event.message 中找 forward 段 → get_forward_msg
-    2. get_msg 完整消息中找 forward 段 → get_forward_msg
-    3. SnowLuma: 合并转发消息显示为 [聊天记录]，直接用 message_id 调 get_forward_msg
-    """
+    """获取转发/合并消息的内容文本。"""
+    _write_fwd_debug(f"get_forward_text called, msg_id={event.message_id}")
     if bot is None:
+        _write_fwd_debug("bot is None, return")
         return ""
+
+    # dump segment types
+    seg_info = [f"{getattr(s,'type','?')}:{str(getattr(s,'data',{}))[:80]}" for s in event.message]
+    _write_fwd_debug(f"segments: {seg_info}")
 
     # 1. event.message 中的 forward 段
     for seg in event.message:
