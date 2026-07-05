@@ -702,6 +702,7 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if not messages:
             break
 
+        batch_lines: list[str] = []
         new_count = 0
         for msg in messages:
             mid = msg.get("message_id", 0)
@@ -722,22 +723,23 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
                     text_parts.append("[合并消息]")
             content = "".join(text_parts)
             if content.strip():
-                all_lines.append(f"[{t}] {nickname}({user_id}): {content}")
+                batch_lines.append(f"[{t}] {nickname}({user_id}): {content}")
                 new_count += 1
 
         if new_count == 0:
             break
 
+        batch_lines.reverse()  # 每批内部：最新→最旧 翻转为 最旧→最新
+        all_lines = batch_lines + all_lines  # 更旧的批次放在前面
+
         # 用 message_id 最大的（时间最旧）继续往前翻页
         next_mid = max((m.get("message_id", 0) for m in messages), default=0)
-        # 诊断：写入第一条和最后一条的时间
+        # 诊断
         try:
             from config import DATA_DIR
-            first_time = _datetime.fromtimestamp(messages[0].get("time", 0))
-            last_time = _datetime.fromtimestamp(messages[-1].get("time", 0))
             (DATA_DIR / ".history_diag").write_text(
-                f"batch first: {first_time} mid={messages[0].get('message_id')}\n"
-                f"batch last:  {last_time} mid={messages[-1].get('message_id')}\n"
+                f"batch first: {_datetime.fromtimestamp(messages[0].get('time',0))} mid={messages[0].get('message_id')}\n"
+                f"batch last:  {_datetime.fromtimestamp(messages[-1].get('time',0))} mid={messages[-1].get('message_id')}\n"
                 f"next_mid={next_mid} total_so_far={len(all_lines)}\n"
             )
         except Exception:
@@ -745,7 +747,6 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if not next_mid:
             break
 
-    all_lines.reverse()  # 翻页从新到旧，翻转变成旧到新（时间正序）
     filepath.write_text("\n".join(all_lines), encoding="utf-8")
     return len(all_lines), str(filepath)
 
