@@ -728,8 +728,8 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if new_count == 0:
             break
 
-        # 用 message_id 最小的（时间最旧）继续往前翻页
-        next_mid = min((m.get("message_id", 0) for m in messages), default=0)
+        # 用 message_id 最大的（时间最旧）继续往前翻页
+        next_mid = max((m.get("message_id", 0) for m in messages), default=0)
         # 诊断：写入第一条和最后一条的时间
         try:
             from config import DATA_DIR
