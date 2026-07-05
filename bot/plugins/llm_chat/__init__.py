@@ -686,13 +686,13 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
     filename = f"chatlog_{group_id}_{timestamp}.txt"
     filepath = _CHATLOG_DIR / filename
 
-    all_lines: list[str] = []
+    all_rows: list[tuple[int, str]] = []  # (timestamp, line)
     seen: set[int] = set()
     total = min(count, _TOTAL_MAX)
     next_mid = message_id
 
-    while len(all_lines) < total:
-        batch_count = min(_FETCH_BATCH, total - len(all_lines))
+    while len(all_rows) < total:
+        batch_count = min(_FETCH_BATCH, total - len(all_rows))
         params = {"group_id": group_id, "count": batch_count}
         if next_mid:
             params["message_id"] = next_mid
@@ -702,14 +702,14 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if not messages:
             break
 
-        batch_lines: list[str] = []
         new_count = 0
         for msg in messages:
             mid = msg.get("message_id", 0)
             if mid in seen:
                 continue
             seen.add(mid)
-            t = _datetime.fromtimestamp(msg.get("time", 0)).strftime("%m-%d %H:%M")
+            ts = msg.get("time", 0)
+            t = _datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
             sender = msg.get("sender", {})
             nickname = sender.get("nickname", "") or sender.get("card", "") or str(sender.get("user_id", "?"))
             user_id = sender.get("user_id", "")
@@ -723,32 +723,22 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
                     text_parts.append("[合并消息]")
             content = "".join(text_parts)
             if content.strip():
-                batch_lines.append(f"[{t}] {nickname}({user_id}): {content}")
+                all_rows.append((ts, f"[{t}] {nickname}({user_id}): {content}"))
                 new_count += 1
 
         if new_count == 0:
             break
 
-        batch_lines.reverse()  # 每批内部：最新→最旧 翻转为 最旧→最新
-        all_lines = batch_lines + all_lines  # 更旧的批次放在前面
-
         # 用 message_id 最大的（时间最旧）继续往前翻页
         next_mid = max((m.get("message_id", 0) for m in messages), default=0)
-        # 诊断
-        try:
-            from config import DATA_DIR
-            (DATA_DIR / ".history_diag").write_text(
-                f"batch first: {_datetime.fromtimestamp(messages[0].get('time',0))} mid={messages[0].get('message_id')}\n"
-                f"batch last:  {_datetime.fromtimestamp(messages[-1].get('time',0))} mid={messages[-1].get('message_id')}\n"
-                f"next_mid={next_mid} total_so_far={len(all_lines)}\n"
-            )
-        except Exception:
-            pass
         if not next_mid:
             break
 
-    filepath.write_text("\n".join(all_lines), encoding="utf-8")
-    return len(all_lines), str(filepath)
+    # 按时间戳升序排列（旧→新）
+    all_rows.sort(key=lambda x: x[0])
+    lines = [row[1] for row in all_rows]
+    filepath.write_text("\n".join(lines), encoding="utf-8")
+    return len(lines), str(filepath)
 
 
 @history_cmd.handle()
