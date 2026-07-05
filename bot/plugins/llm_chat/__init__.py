@@ -674,45 +674,68 @@ from config import DATA_DIR as _DATA_DIR
 _CHATLOG_DIR = _DATA_DIR / "chatlogs"
 
 
+_FETCH_BATCH = 200  # SL 单次最多 200
+_TOTAL_MAX = 1000   # 总共最多 1000
+
 async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
                            message_id: int = 0) -> tuple[int, str]:
-    """拉取历史消息并保存为 txt"""
+    """拉取历史消息并保存为 txt，支持分页拉取"""
     _CHATLOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    params = {"group_id": group_id, "count": count}
-    if message_id:
-        params["message_id"] = message_id
-    result = await bot.call_api("get_group_msg_history", **params)
-
-    messages = result.get("messages", [])
-    if not messages:
-        return 0, ""
 
     timestamp = _datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"chatlog_{group_id}_{timestamp}.txt"
     filepath = _CHATLOG_DIR / filename
 
-    lines = []
-    for msg in messages:
-        t = _datetime.fromtimestamp(msg.get("time", 0)).strftime("%m-%d %H:%M")
-        sender = msg.get("sender", {})
-        nickname = sender.get("nickname", "") or sender.get("card", "") or str(sender.get("user_id", "?"))
-        user_id = sender.get("user_id", "")
-        message_list = msg.get("message", [])
-        text_parts = []
-        for seg in message_list:
-            if seg.get("type") == "text":
-                text_parts.append(seg.get("data", {}).get("text", ""))
-            elif seg.get("type") == "image":
-                text_parts.append("[图片]")
-            elif seg.get("type") == "forward":
-                text_parts.append("[合并消息]")
-        content = "".join(text_parts)
-        if content.strip():
-            lines.append(f"[{t}] {nickname}({user_id}): {content}")
+    all_lines: list[str] = []
+    seen: set[int] = set()
+    total = min(count, _TOTAL_MAX)
+    next_mid = message_id
 
-    filepath.write_text("\n".join(lines), encoding="utf-8")
-    return len(lines), str(filepath)
+    while len(all_lines) < total:
+        batch_count = min(_FETCH_BATCH, total - len(all_lines))
+        params = {"group_id": group_id, "count": batch_count}
+        if next_mid:
+            params["message_id"] = next_mid
+
+        result = await bot.call_api("get_group_msg_history", **params)
+        messages = result.get("messages", [])
+        if not messages:
+            break
+
+        new_count = 0
+        for msg in messages:
+            mid = msg.get("message_id", 0)
+            if mid in seen:
+                continue
+            seen.add(mid)
+            t = _datetime.fromtimestamp(msg.get("time", 0)).strftime("%m-%d %H:%M")
+            sender = msg.get("sender", {})
+            nickname = sender.get("nickname", "") or sender.get("card", "") or str(sender.get("user_id", "?"))
+            user_id = sender.get("user_id", "")
+            text_parts = []
+            for seg in msg.get("message", []):
+                if seg.get("type") == "text":
+                    text_parts.append(seg.get("data", {}).get("text", ""))
+                elif seg.get("type") == "image":
+                    text_parts.append("[图片]")
+                elif seg.get("type") == "forward":
+                    text_parts.append("[合并消息]")
+            content = "".join(text_parts)
+            if content.strip():
+                all_lines.append(f"[{t}] {nickname}({user_id}): {content}")
+                new_count += 1
+
+        if new_count == 0:
+            break
+
+        # 用最后一条的 message_id 继续往前翻页
+        last = messages[-1]
+        next_mid = last.get("message_id", 0)
+        if not next_mid:
+            break
+
+    filepath.write_text("\n".join(all_lines), encoding="utf-8")
+    return len(all_lines), str(filepath)
 
 
 @history_cmd.handle()
@@ -725,7 +748,7 @@ async def handle_history(event: GroupMessageEvent, bot: Bot):
     parts = text.split()
     msg_count = 100
     if len(parts) >= 2 and parts[1].isdigit():
-        msg_count = min(int(parts[1]), 500)
+        msg_count = min(int(parts[1]), 1000)
 
     await history_cmd.send(Message(f"正在拉取 {msg_count} 条历史消息..."))
     count = 0
