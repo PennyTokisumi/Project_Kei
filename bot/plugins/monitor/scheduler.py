@@ -115,19 +115,18 @@ async def poll_source(source: SourceBase):
                 tracker.check_and_update(is_living=False, title="")
         nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
     else:
+        # 先去重后推送——标记必须先于推送，防止异常导致无限重推
+        for item in new_items:
+            dedup.mark_pushed(
+                item.platform, item.source_type,
+                item.target_id, item.id,
+                item.title, item.link,
+            )
         try:
             await send_dynamic_forward(bot, source.group_id, new_items)
             nb_logger.info(f"推送动态 [{source.platform}/{source.target_id}] {len(new_items)} 条")
         except Exception as e:
             nb_logger.error(f"推送动态失败 [{source.platform}/{source.target_id}]: {e}")
-        else:
-            # 推送成功后才标记去重
-            for item in new_items:
-                dedup.mark_pushed(
-                    item.platform, item.source_type,
-                    item.target_id, item.id,
-                    item.title, item.link,
-                )
 
 
 def _make_source(target: dict) -> Optional[SourceBase]:
