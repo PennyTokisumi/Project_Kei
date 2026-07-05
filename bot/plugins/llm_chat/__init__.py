@@ -705,6 +705,8 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
                 text_parts.append(seg.get("data", {}).get("text", ""))
             elif seg.get("type") == "image":
                 text_parts.append("[图片]")
+            elif seg.get("type") == "forward":
+                text_parts.append("[合并消息]")
         content = "".join(text_parts)
         if content.strip():
             lines.append(f"[{t}] {nickname}({user_id}): {content}")
