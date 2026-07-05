@@ -745,6 +745,7 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if not next_mid:
             break
 
+    all_lines.reverse()  # 翻页从新到旧，翻转变成旧到新（时间正序）
     filepath.write_text("\n".join(all_lines), encoding="utf-8")
     return len(all_lines), str(filepath)
 
