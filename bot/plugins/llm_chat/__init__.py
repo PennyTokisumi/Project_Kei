@@ -730,7 +730,10 @@ async def handle_history(event: GroupMessageEvent, bot: Bot):
     path = ""
     error_msg = None
     try:
-        count, path = await _fetch_and_save(bot, event.group_id, count=msg_count)
+        count, path = await _fetch_and_save(
+            bot, event.group_id, count=msg_count,
+            message_id=event.message_id,
+        )
     except Exception as e:
         error_msg = str(e)
 
