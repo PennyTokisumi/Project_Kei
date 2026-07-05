@@ -728,9 +728,20 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
         if new_count == 0:
             break
 
-        # 用最后一条的 message_id 继续往前翻页
-        last = messages[-1]
-        next_mid = last.get("message_id", 0)
+        # 用 message_id 最小的（时间最旧）继续往前翻页
+        next_mid = min((m.get("message_id", 0) for m in messages), default=0)
+        # 诊断：写入第一条和最后一条的时间
+        try:
+            from config import DATA_DIR
+            first_time = _datetime.fromtimestamp(messages[0].get("time", 0))
+            last_time = _datetime.fromtimestamp(messages[-1].get("time", 0))
+            (DATA_DIR / ".history_diag").write_text(
+                f"batch first: {first_time} mid={messages[0].get('message_id')}\n"
+                f"batch last:  {last_time} mid={messages[-1].get('message_id')}\n"
+                f"next_mid={next_mid} total_so_far={len(all_lines)}\n"
+            )
+        except Exception:
+            pass
         if not next_mid:
             break
 
