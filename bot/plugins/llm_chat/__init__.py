@@ -675,13 +675,13 @@ _CHATLOG_DIR = _DATA_DIR / "chatlogs"
 
 
 async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
-                           message_seq: int = 0) -> tuple[int, str]:
+                           message_id: int = 0) -> tuple[int, str]:
     """拉取历史消息并保存为 txt"""
     _CHATLOG_DIR.mkdir(parents=True, exist_ok=True)
 
     params = {"group_id": group_id, "count": count}
-    if message_seq:
-        params["message_seq"] = message_seq
+    if message_id:
+        params["message_id"] = message_id
     result = await bot.call_api("get_group_msg_history", **params)
 
     messages = result.get("messages", [])
