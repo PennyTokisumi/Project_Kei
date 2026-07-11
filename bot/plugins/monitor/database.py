@@ -94,7 +94,7 @@ def add_target(group_id: int, platform: str, target_id: str,
 
 
 def remove_target(target_id: int) -> bool:
-    """软删除（设置 enabled=0），若所有群都已移除则清空去重记录"""
+    """软删除（设置 enabled=0），若所有群都已移除则清空去重记录和直播状态"""
     conn = get_conn()
     # 获取要删除的目标信息
     row = conn.execute(
@@ -114,10 +114,18 @@ def remove_target(target_id: int) -> bool:
     ).fetchone()
 
     if not remaining:
-        # 所有群都移除了，清空去重记录以便后续重新添加时正常推送
+        # 所有群都移除了，清空去重记录和直播状态
+        # 注意：pushed_items/live_status 中 platform 使用 SourceBase.platform
+        # 属性值（如 "douyu"、"bilibili"），而 monitor_targets 中 platform
+        # 使用 source_type 完整的 key（如 "douyu_live"）。
+        # 这里用 target_id 匹配以覆盖所有可能的 platform 值。
         conn.execute(
-            "DELETE FROM pushed_items WHERE platform=? AND target_id=?",
-            (row["platform"], row["target_id"]),
+            "DELETE FROM pushed_items WHERE target_id=?",
+            (row["target_id"],),
+        )
+        conn.execute(
+            "DELETE FROM live_status WHERE room_id=?",
+            (row["target_id"],),
         )
         conn.commit()
 
