@@ -1,5 +1,7 @@
 """斗鱼直播监测 - 官方 API 为主，第三方镜像为备用"""
 
+import re
+
 from httpx import AsyncClient
 from nonebot import logger as nb_logger
 
@@ -34,8 +36,11 @@ HEADERS = {
 class DouyuLive(SourceBase):
     """斗鱼直播监测源
 
-    优先使用斗鱼官方 betard 接口，失败时回退到第三方镜像。
+    优先使用斗鱼官方 betard 接口。部分房间使用自定义 URL（vipId），
+    此时会自动从网页解析真实 room_id 再重试。最后回退到第三方镜像。
     """
+
+    _real_room_id: str | None = None
 
     @property
     def platform(self) -> str:
@@ -48,28 +53,57 @@ class DouyuLive(SourceBase):
     # ─── 主入口 ──────────────────────────────────────────
 
     async def fetch(self) -> list[Item]:
-        """拉取斗鱼直播间状态，默认使用官方 API"""
+        """拉取斗鱼直播间状态"""
         item = await self._fetch_official()
         if item is None:
             item = await self._fetch_fallback()
         return [item] if item else []
 
+    # ─── 房间 ID 解析 ────────────────────────────────────
+
+    async def _resolve_real_room_id(self) -> str | None:
+        """从斗鱼网页提取真实 room_id（处理 vipId 自定义 URL）
+
+        斗鱼允许主播设置自定义 URL（如 douyu.com/6657），但 betard
+        API 只认数字 room_id。网页 SSR 数据中包含真实 room_id。
+        """
+        url = f"https://www.douyu.com/{self.target_id}"
+        try:
+            async with AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.get(url, headers=HEADERS)
+                html = resp.text
+            m = re.search(r'"room_id"\s*:\s*(\d+)', html)
+            if m:
+                rid = m.group(1)
+                if rid != str(self.target_id):
+                    return rid
+        except Exception:
+            pass
+        return None
+
     # ─── 官方 API ────────────────────────────────────────
 
     async def _fetch_official(self) -> Item | None:
         """斗鱼官方 betard 接口"""
-        url = DOUYU_API_OFFICIAL.format(room_id=self.target_id)
+        rid = self._real_room_id or self.target_id
+        url = DOUYU_API_OFFICIAL.format(room_id=rid)
         try:
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 resp.raise_for_status()
                 ct = resp.headers.get("content-type", "")
                 if "application/json" not in ct:
-                    # 部分房间（如旧版/特殊房间）betard API 返回 HTML，
-                    # 此时不尝试解析 JSON，直接回退到第三方 API
+                    # betard 返回 HTML → 可能是 vipId 自定义 URL
+                    if rid == self.target_id and self._real_room_id is None:
+                        real = await self._resolve_real_room_id()
+                        if real and real != self.target_id:
+                            self._real_room_id = real
+                            nb_logger.info(
+                                f"斗鱼房间 {self.target_id} → 真实 room_id: {real}"
+                            )
+                            return await self._fetch_official()
                     nb_logger.debug(
-                        f"斗鱼 betard API 返回非 JSON (房间 {self.target_id})，"
-                        f"回退到第三方 API"
+                        f"斗鱼 betard API 返回非 JSON (房间 {rid})"
                     )
                     return None
                 data = resp.json()
@@ -84,8 +118,7 @@ class DouyuLive(SourceBase):
         if room.get("show_status") != 1:
             return None
 
-        room_id = str(room.get("room_id", self.target_id))
-        # room_src 是相对路径，用 coverSrc / room_pic 才是完整 URL
+        room_id = str(room.get("room_id", rid))
         cover = room.get("coverSrc") or room.get("room_pic") or ""
         return Item(
             id=f"live_{room_id}",
@@ -95,7 +128,7 @@ class DouyuLive(SourceBase):
             title=room.get("room_name", ""),
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
-            link=f"https://www.douyu.com/{room_id}",
+            link=f"https://www.douyu.com/{self.target_id}",
             cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("second_lvl_name", ""),
@@ -106,7 +139,9 @@ class DouyuLive(SourceBase):
 
     async def _fetch_fallback(self) -> Item | None:
         """第三方 open.douyucdn.cn 接口"""
-        url = DOUYU_API_FALLBACK.format(room_id=self.target_id)
+        # 用真实 room_id（如有），因为第三方 API 也不认识 vipId
+        rid = self._real_room_id or self.target_id
+        url = DOUYU_API_FALLBACK.format(room_id=rid)
         try:
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
@@ -147,22 +182,25 @@ class DouyuLive(SourceBase):
 
     async def get_display_name(self) -> str:
         """获取主播名（官方 API 优先）"""
+        rid = self._real_room_id or self.target_id
         # 尝试官方
         try:
-            url = DOUYU_API_OFFICIAL.format(room_id=self.target_id)
+            url = DOUYU_API_OFFICIAL.format(room_id=rid)
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 if resp.status_code == 200:
-                    data = resp.json()
-                    name = data.get("room", {}).get("owner_name", "")
-                    if name:
-                        return name
+                    ct = resp.headers.get("content-type", "")
+                    if "application/json" in ct:
+                        data = resp.json()
+                        name = data.get("room", {}).get("owner_name", "")
+                        if name:
+                            return name
         except Exception:
             pass
 
         # 回退
         try:
-            url = DOUYU_API_FALLBACK.format(room_id=self.target_id)
+            url = DOUYU_API_FALLBACK.format(room_id=rid)
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     url,
