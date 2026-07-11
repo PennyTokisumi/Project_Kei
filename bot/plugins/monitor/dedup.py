@@ -8,13 +8,13 @@ class Deduplicator:
 
     @staticmethod
     def make_id(platform: str, source_type: str, target_id: str,
-                content_id: str) -> str:
+                content_id: str, group_id: int = 0) -> str:
         """生成全局唯一去重 ID
 
-        格式: {platform}_{source_type}/{target_id}/{content_id}
-        示例: bilibili_dynamic/436742/123456789
+        格式: {platform}_{source_type}/{group_id}/{target_id}/{content_id}
+        多群去重：不同群各自独立去重。
         """
-        return f"{platform}_{source_type}/{target_id}/{content_id}"
+        return f"{platform}_{source_type}/{group_id}/{target_id}/{content_id}"
 
     def already_pushed(self, item_id: str) -> bool:
         """是否已推送过"""
@@ -22,15 +22,19 @@ class Deduplicator:
 
     def mark_pushed(self, platform: str, source_type: str,
                     target_id: str, content_id: str,
-                    title: str = "", link: str = ""):
+                    title: str = "", link: str = "",
+                    group_id: int = 0):
         """标记为已推送"""
-        item_id = self.make_id(platform, source_type, target_id, content_id)
+        item_id = self.make_id(platform, source_type, target_id,
+                               content_id, group_id)
         mark_pushed(item_id, platform, target_id, source_type, title, link)
 
     def is_new(self, platform: str, source_type: str,
-               target_id: str, content_id: str) -> bool:
+               target_id: str, content_id: str,
+               group_id: int = 0) -> bool:
         """判断是否新内容（未推送过）"""
-        item_id = self.make_id(platform, source_type, target_id, content_id)
+        item_id = self.make_id(platform, source_type, target_id,
+                               content_id, group_id)
         return not self.already_pushed(item_id)
 
 

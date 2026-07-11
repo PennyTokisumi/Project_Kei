@@ -52,7 +52,8 @@ async def poll_source(source: SourceBase):
     if not items:
         # 直播源下播时更新状态，确保下次开播能检测到 off→on
         if is_live:
-            tracker = LiveStatusTracker(source.target_id, source.platform)
+            tracker = LiveStatusTracker(source.target_id, source.platform,
+                                         group_id=source.group_id)
             tracker.check_and_update(is_living=False, title="")
         return
 
@@ -61,7 +62,8 @@ async def poll_source(source: SourceBase):
     for item in items:
         if is_live:
             # 直播类：不做 dedup 去重，交给 LiveStatusTracker 做 off→on 检测
-            tracker = LiveStatusTracker(item.target_id, item.platform)
+            tracker = LiveStatusTracker(item.target_id, item.platform,
+                                        group_id=source.group_id)
             detected = tracker.check_and_update(is_living=True, title=item.title)
             if not detected:
                 continue
@@ -70,6 +72,7 @@ async def poll_source(source: SourceBase):
             is_new = dedup.is_new(
                 item.platform, item.source_type,
                 item.target_id, item.id,
+                group_id=source.group_id,
             )
             if not is_new:
                 continue
@@ -81,7 +84,7 @@ async def poll_source(source: SourceBase):
 
     # 动态类：启动后首次轮询，跳过重启前发布的旧动态
     if not is_live:
-        key = (source.platform, source.target_id)
+        key = (source.platform, source.target_id, source.group_id)
         if key not in _synced_targets:
             _synced_targets.add(key)
             truly_new = []
@@ -95,6 +98,7 @@ async def poll_source(source: SourceBase):
                         item.platform, item.source_type,
                         item.target_id, item.id,
                         item.title, item.link,
+                        group_id=source.group_id,
                     )
             skipped = len(new_items) - len(truly_new)
             if skipped:
@@ -111,7 +115,8 @@ async def poll_source(source: SourceBase):
             except Exception as e:
                 nb_logger.error(f"推送开播失败 [{source.platform}/{source.target_id}]: {e}")
                 # 仅回滚本条，下次轮询可重试
-                tracker = LiveStatusTracker(item.target_id, item.platform)
+                tracker = LiveStatusTracker(item.target_id, item.platform,
+                                            group_id=source.group_id)
                 tracker.check_and_update(is_living=False, title="")
         nb_logger.info(f"推送开播提醒 [{source.platform}/{source.target_id}]")
     else:
@@ -121,6 +126,7 @@ async def poll_source(source: SourceBase):
                 item.platform, item.source_type,
                 item.target_id, item.id,
                 item.title, item.link,
+                group_id=source.group_id,
             )
         try:
             await send_dynamic_forward(bot, source.group_id, new_items)
@@ -165,7 +171,7 @@ async def start():
             continue
 
         interval = config.poll_interval
-        job_id = f"{source.platform}/{source.target_id}"
+        job_id = f"{source.platform}/{source.target_id}/{source.group_id}"
 
         scheduler.add_job(
             poll_source,
@@ -205,7 +211,7 @@ async def reload_targets():
         source = _make_source(t)
         if source is None:
             continue
-        job_id = f"{source.platform}/{source.target_id}"
+        job_id = f"{source.platform}/{source.target_id}/{source.group_id}"
         wanted_ids.add(job_id)
 
         if job_id not in current_jobs:

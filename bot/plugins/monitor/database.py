@@ -124,8 +124,8 @@ def remove_target(target_id: int) -> bool:
             (row["target_id"],),
         )
         conn.execute(
-            "DELETE FROM live_status WHERE room_id=?",
-            (row["target_id"],),
+            "DELETE FROM live_status WHERE room_id=? OR room_id LIKE '%:' || ?",
+            (row["target_id"], row["target_id"]),
         )
         conn.commit()
 
