@@ -1,6 +1,7 @@
 """斗鱼直播监测 - 官方 API 为主，第三方镜像为备用"""
 
 from httpx import AsyncClient
+from nonebot import logger as nb_logger
 
 from .base import Item, SourceBase
 
@@ -62,6 +63,15 @@ class DouyuLive(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 resp.raise_for_status()
+                ct = resp.headers.get("content-type", "")
+                if "application/json" not in ct:
+                    # 部分房间（如旧版/特殊房间）betard API 返回 HTML，
+                    # 此时不尝试解析 JSON，直接回退到第三方 API
+                    nb_logger.debug(
+                        f"斗鱼 betard API 返回非 JSON (房间 {self.target_id})，"
+                        f"回退到第三方 API"
+                    )
+                    return None
                 data = resp.json()
         except Exception:
             return None
