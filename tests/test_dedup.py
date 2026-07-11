@@ -20,7 +20,7 @@ class TestDeduplicator:
         """ID 格式正确"""
         dedup = Deduplicator()
         item_id = dedup.make_id("bilibili", "dynamic", "436742", "123456")
-        assert item_id == "bilibili_dynamic/436742/123456"
+        assert item_id == "bilibili_dynamic/0/436742/123456"
 
     def test_is_new_first_time(self, dedup):
         """首次检查总是 True"""

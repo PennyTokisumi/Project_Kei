@@ -54,8 +54,10 @@ class DouyuLive(SourceBase):
 
     async def fetch(self) -> list[Item]:
         """拉取斗鱼直播间状态"""
+        self._api_responded = False
         item = await self._fetch_official()
-        if item is None:
+        if item is None and not self._api_responded:
+            # 官方 API 无响应才回退到第三方
             item = await self._fetch_fallback()
         return [item] if item else []
 
@@ -91,9 +93,10 @@ class DouyuLive(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 resp.raise_for_status()
-                ct = resp.headers.get("content-type", "")
-                if "application/json" not in ct:
-                    # betard 返回 HTML → 可能是 vipId 自定义 URL
+                try:
+                    data = resp.json()
+                except Exception:
+                    # JSON 解析失败 → 可能是 vipId 自定义 URL 返回了 HTML
                     if rid == self.target_id and self._real_room_id is None:
                         real = await self._resolve_real_room_id()
                         if real and real != self.target_id:
@@ -106,7 +109,7 @@ class DouyuLive(SourceBase):
                         f"斗鱼 betard API 返回非 JSON (房间 {rid})"
                     )
                     return None
-                data = resp.json()
+                self._api_responded = True
         except Exception:
             return None
 
@@ -119,7 +122,7 @@ class DouyuLive(SourceBase):
             return None
 
         # rst=3 表示自动轮播/录像重播，不是真直播
-        if room.get("rst") != 0:
+        if room.get("rst", 0) != 0:
             nb_logger.debug(
                 f"斗鱼房间 {self.target_id} rst={room.get('rst')}，"
                 f"疑似轮播，跳过推送"
