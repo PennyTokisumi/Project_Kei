@@ -72,7 +72,7 @@ class DouyuLive(SourceBase):
             async with AsyncClient(timeout=10, follow_redirects=True) as client:
                 resp = await client.get(url, headers=HEADERS)
                 html = resp.text
-            m = re.search(r'"room_id"\s*:\s*(\d+)', html)
+            m = re.search(r'room_id\D+(\d{5,})', html)
             if m:
                 rid = m.group(1)
                 if rid != str(self.target_id):
