@@ -118,6 +118,14 @@ class DouyuLive(SourceBase):
         if room.get("show_status") != 1:
             return None
 
+        # rst=3 表示自动轮播/录像重播，不是真直播
+        if room.get("rst") != 0:
+            nb_logger.debug(
+                f"斗鱼房间 {self.target_id} rst={room.get('rst')}，"
+                f"疑似轮播，跳过推送"
+            )
+            return None
+
         room_id = str(room.get("room_id", rid))
         cover = room.get("coverSrc") or room.get("room_pic") or ""
         return Item(
