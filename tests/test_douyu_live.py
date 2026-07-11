@@ -42,22 +42,13 @@ class TestDouyuFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_official_offline(self, httpx_mock):
-        """官方 API 返回未开播状态 → 回退到备用 API → 也返回未开播 → 空列表"""
-        from plugins.monitor.sources.douyu_live import (
-            DOUYU_API_OFFICIAL,
-            DOUYU_API_FALLBACK,
-        )
+        """官方 API 返回未开播状态 → 空列表（不走回退）"""
+        from plugins.monitor.sources.douyu_live import DOUYU_API_OFFICIAL
 
         # 官方：未开播
         httpx_mock.add_response(
             url=DOUYU_API_OFFICIAL.format(room_id="617916"),
             json={"room": {"room_id": 617916, "show_status": 2}},
-            status_code=200,
-        )
-        # 备用：也未开播
-        httpx_mock.add_response(
-            url=DOUYU_API_FALLBACK.format(room_id="617916"),
-            json={"error": 0, "data": {"room_status": "2"}},
             status_code=200,
         )
 
