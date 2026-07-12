@@ -105,6 +105,8 @@ class DouyuLive(SourceBase):
                                 f"斗鱼房间 {self.target_id} → 真实 room_id: {real}"
                             )
                             return await self._fetch_official()
+                        # 解析失败也标记已响应，防止 fallback 绕过
+                        self._api_responded = True
                     nb_logger.debug(
                         f"斗鱼 betard API 返回非 JSON (房间 {rid})"
                     )
