@@ -112,8 +112,20 @@ async def poll_source(source: SourceBase):
         for item in new_items:
             try:
                 await send_live_notification(bot, source.group_id, item)
+                # DIAG
+                from pathlib import Path
+                from datetime import datetime
+                diag = f"{datetime.now().strftime('%H:%M:%S')} PUSH OK gid={source.group_id} target={source.target_id}\n"
+                p = Path("H:/Agent/Project/Project_Kei/data/_push_live_diag")
+                p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
             except Exception as e:
                 nb_logger.error(f"推送开播失败 [{source.platform}/{source.target_id}]: {e}")
+                # DIAG
+                from pathlib import Path
+                from datetime import datetime
+                diag = f"{datetime.now().strftime('%H:%M:%S')} PUSH FAIL gid={source.group_id} target={source.target_id} err={e}\n"
+                p = Path("H:/Agent/Project/Project_Kei/data/_push_fail_diag")
+                p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
                 # 仅回滚本条，下次轮询可重试
                 tracker = LiveStatusTracker(item.target_id, item.platform,
                                             group_id=source.group_id)
