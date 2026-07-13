@@ -119,11 +119,12 @@ class DouyuLive(SourceBase):
             return None
 
         room = data.get("room", {})
-        # DIAG
+        # DIAG: 追加记录每次JSON成功后的数据
         from pathlib import Path
-        diag = f"rid={rid} ss={room.get('show_status')} rst={room.get('rst')} name={str(room.get('room_name',''))[:30]}"
-        (Path("H:/Agent/Project/Project_Kei/data/_douyu_room_diag")
-         .write_text(diag, encoding="utf-8"))
+        from datetime import datetime
+        diag = f"{datetime.now().strftime('%H:%M:%S')} rid={rid} ss={room.get('show_status')} rst={room.get('rst')}\n"
+        p = Path("H:/Agent/Project/Project_Kei/data/_douyu_room_diag")
+        p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
         if not room:
             return None
 
