@@ -50,6 +50,7 @@ def init_db():
             platform    TEXT NOT NULL,
             is_living   INTEGER DEFAULT 0,
             last_title  TEXT,
+            offline_count INTEGER DEFAULT 0,
             checked_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (room_id, platform)
         );
@@ -59,6 +60,11 @@ def init_db():
             value TEXT NOT NULL
         );
     """)
+    # 迁移：旧表可能无 offline_count 列
+    try:
+        conn.execute("ALTER TABLE live_status ADD COLUMN offline_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
     conn.commit()
 
 
@@ -214,12 +220,12 @@ def get_live_status(room_id: str, platform: str) -> Optional[dict]:
 
 
 def set_live_status(room_id: str, platform: str, is_living: bool,
-                    last_title: str = ""):
+                    last_title: str = "", offline_count: int = 0):
     """更新直播状态"""
     conn = get_conn()
     conn.execute(
-        "INSERT OR REPLACE INTO live_status (room_id, platform, is_living, last_title, checked_at) "
-        "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-        (room_id, platform, 1 if is_living else 0, last_title),
+        "INSERT OR REPLACE INTO live_status (room_id, platform, is_living, last_title, offline_count, checked_at) "
+        "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
+        (room_id, platform, 1 if is_living else 0, last_title, offline_count),
     )
     conn.commit()
