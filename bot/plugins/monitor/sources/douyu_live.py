@@ -122,7 +122,7 @@ class DouyuLive(SourceBase):
         # DIAG: 追加记录每次JSON成功后的数据
         from pathlib import Path
         from datetime import datetime
-        diag = f"{datetime.now().strftime('%H:%M:%S')} rid={rid} ss={room.get('show_status')} rst={room.get('rst')}\n"
+        diag = f"{datetime.now().strftime('%H:%M:%S')} gid={self.group_id} rid={rid} ss={room.get('show_status')} rst={room.get('rst')}\n"
         p = Path("H:/Agent/Project/Project_Kei/data/_douyu_room_diag")
         p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
         if not room:
