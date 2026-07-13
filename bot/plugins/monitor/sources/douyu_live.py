@@ -116,6 +116,7 @@ class DouyuLive(SourceBase):
                     return None
                 self._api_responded = True
         except Exception:
+            self._api_responded = True
             return None
 
         room = data.get("room", {})

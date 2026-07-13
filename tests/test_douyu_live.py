@@ -58,43 +58,17 @@ class TestDouyuFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_fallback_on_official_fail(self, httpx_mock):
-        """官方 API 失败 → 回退到第三方 API"""
-        from plugins.monitor.sources.douyu_live import (
-            DOUYU_API_OFFICIAL,
-            DOUYU_API_FALLBACK,
-        )
+        """官方 API 网络故障 → 不回退，返回空（兜底不走fallback）"""
+        from plugins.monitor.sources.douyu_live import DOUYU_API_OFFICIAL
 
-        # 官方 API 报错
         httpx_mock.add_exception(
             url=DOUYU_API_OFFICIAL.format(room_id="617916"),
             exception=Exception("连接超时"),
         )
 
-        # 备用 API 正常
-        httpx_mock.add_response(
-            url=DOUYU_API_FALLBACK.format(room_id="617916"),
-            json={
-                "error": 0,
-                "data": {
-                    "room_id": 617916,
-                    "room_name": "备用直播标题",
-                    "owner_name": "备用主播",
-                    "room_status": "1",
-                    "room_thumb": "https://fallback.jpg",
-                    "game_name": "王者荣耀",
-                },
-            },
-            status_code=200,
-        )
-
         source = DouyuLive("617916", 123456)
         items = await source.fetch()
-
-        assert len(items) == 1
-        item = items[0]
-        assert item.title == "备用直播标题"
-        assert item.nickname == "备用主播"
-        assert item.extra["game_name"] == "王者荣耀"
+        assert items == []
 
     @pytest.mark.asyncio
     async def test_fetch_both_fail(self, httpx_mock):
@@ -119,25 +93,12 @@ class TestDouyuFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_fallback_offline(self, httpx_mock):
-        """官方失败，备用 API 返回未开播"""
-        from plugins.monitor.sources.douyu_live import (
-            DOUYU_API_OFFICIAL,
-            DOUYU_API_FALLBACK,
-        )
+        """官方 API 故障 → 不回退，返回空"""
+        from plugins.monitor.sources.douyu_live import DOUYU_API_OFFICIAL
 
         httpx_mock.add_exception(
             url=DOUYU_API_OFFICIAL.format(room_id="617916"),
             exception=Exception("超时"),
-        )
-        httpx_mock.add_response(
-            url=DOUYU_API_FALLBACK.format(room_id="617916"),
-            json={
-                "error": 0,
-                "data": {
-                    "room_status": "2",  # 未开播
-                },
-            },
-            status_code=200,
         )
 
         source = DouyuLive("617916", 123456)
