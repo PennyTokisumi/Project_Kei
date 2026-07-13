@@ -119,6 +119,11 @@ class DouyuLive(SourceBase):
             return None
 
         room = data.get("room", {})
+        # DIAG
+        from pathlib import Path
+        diag = f"rid={rid} ss={room.get('show_status')} rst={room.get('rst')} name={str(room.get('room_name',''))[:30]}"
+        (Path("H:/Agent/Project/Project_Kei/data/_douyu_room_diag")
+         .write_text(diag, encoding="utf-8"))
         if not room:
             return None
 
@@ -128,10 +133,10 @@ class DouyuLive(SourceBase):
 
         # rst=3 表示自动轮播/录像重播，不是真直播
         if room.get("rst", 0) != 0:
-            nb_logger.debug(
-                f"斗鱼房间 {self.target_id} rst={room.get('rst')}，"
-                f"疑似轮播，跳过推送"
-            )
+            from pathlib import Path
+            p = Path("H:/Agent/Project/Project_Kei/data/_douyu_rst_diag")
+            p.write_text(f"{room.get('rst')}\n{room.get('show_status')}\n{room.get('room_name','')[:50]}",
+                         encoding="utf-8")
             return None
 
         room_id = str(room.get("room_id", rid))
