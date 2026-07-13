@@ -54,6 +54,9 @@ class DouyuLive(SourceBase):
 
     async def fetch(self) -> list[Item]:
         """拉取斗鱼直播间状态"""
+        # DIAG: 确认此代码被加载
+        from pathlib import Path
+        Path("H:/Agent/Project/Project_Kei/data/_douyu_fetch_diag").touch()
         self._api_responded = False
         item = await self._fetch_official()
         if item is None and not self._api_responded:
