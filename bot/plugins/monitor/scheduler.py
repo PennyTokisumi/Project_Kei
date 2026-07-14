@@ -193,6 +193,7 @@ async def start():
             args=[source],
             replace_existing=True,
             misfire_grace_time=30,
+            jitter=5,  # 随机偏移避免多群同时请求被限流
         )
         nb_logger.info(f"注册轮询任务 [{job_id}] 间隔 {interval}s")
 
@@ -235,6 +236,7 @@ async def reload_targets():
                 args=[source],
                 replace_existing=True,
                 misfire_grace_time=30,
+                jitter=5,
             )
             nb_logger.info(f"新增轮询任务 [{job_id}]")
 
