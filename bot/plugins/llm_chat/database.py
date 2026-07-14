@@ -1,20 +1,8 @@
 """LLM Chat 插件 — 数据库管理"""
 
-import sqlite3
-import threading
 import time
 
-from config import DB_PATH
-
-_llm_conn = threading.local()
-
-
-def _get_conn() -> sqlite3.Connection:
-    if not hasattr(_llm_conn, "conn") or _llm_conn.conn is None:
-        _llm_conn.conn = sqlite3.connect(str(DB_PATH))
-        _llm_conn.conn.row_factory = sqlite3.Row
-        _llm_conn.conn.execute("PRAGMA journal_mode=WAL")
-    return _llm_conn.conn
+from utils.db import get_conn as _get_conn
 
 
 def init_llm_db():

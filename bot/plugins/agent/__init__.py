@@ -10,7 +10,7 @@ from nonebot import get_bot, get_driver, on_message, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import to_me, Rule
 
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, SENSEI_QQ
 
 from .database import (
     init_agent_db,
@@ -18,8 +18,6 @@ from .database import (
     mark_sent,
     save_scheduled_message,
 )
-
-SENSEI_QQ = 823262716
 
 
 # ══════════════════════════════════════════════════════

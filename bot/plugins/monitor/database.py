@@ -1,23 +1,8 @@
 """SQLite 数据库 - 建表与 CRUD 操作"""
 
-import sqlite3
-import threading
 from typing import Optional
 
-from config import DB_PATH
-
-# 线程本地存储，保证每个线程有自己的连接
-_local = threading.local()
-
-
-def get_conn() -> sqlite3.Connection:
-    """获取当前线程的数据库连接"""
-    if not hasattr(_local, "conn") or _local.conn is None:
-        _local.conn = sqlite3.connect(str(DB_PATH))
-        _local.conn.row_factory = sqlite3.Row
-        _local.conn.execute("PRAGMA journal_mode=WAL")
-        _local.conn.execute("PRAGMA foreign_keys=ON")
-    return _local.conn
+from utils.db import get_conn
 
 
 def init_db():

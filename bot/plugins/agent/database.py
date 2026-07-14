@@ -1,22 +1,9 @@
 """Agent 插件 — 数据库管理（定时消息持久化）"""
 
-import sqlite3
-import threading
 from datetime import datetime
 from typing import Optional
 
-from config import DB_PATH
-
-_thread_local = threading.local()
-
-
-def _get_conn() -> sqlite3.Connection:
-    """获取当前线程的数据库连接"""
-    if not hasattr(_thread_local, "conn") or _thread_local.conn is None:
-        _thread_local.conn = sqlite3.connect(str(DB_PATH))
-        _thread_local.conn.row_factory = sqlite3.Row
-        _thread_local.conn.execute("PRAGMA journal_mode=WAL")
-    return _thread_local.conn
+from utils.db import get_conn as _get_conn
 
 
 def init_agent_db():

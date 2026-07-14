@@ -84,3 +84,6 @@ def _read_version() -> str:
 
 # 启动时锁定版本号，运行时永不变化
 VERSION = _read_version()
+
+# Sensei QQ 号（唯一管理员，全局引用）
+SENSEI_QQ = "823262716"

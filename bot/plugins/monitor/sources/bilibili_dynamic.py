@@ -5,8 +5,8 @@ from typing import Optional
 
 from httpx import AsyncClient
 
-from config import config
 from utils.wbi import sign_params
+from utils.bilibili import make_headers
 from .base import Item, SourceBase
 
 # ─── B站 API 端点 ──────────────────────────────────────────
@@ -20,23 +20,6 @@ def _to_https(url: str) -> str:
     if url.startswith("http://"):
         return "https://" + url[7:]
     return url
-
-
-def _make_headers() -> dict:
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Referer": "https://space.bilibili.com/",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Origin": "https://space.bilibili.com",
-    }
-    if config.bilibili_cookie:
-        headers["Cookie"] = config.bilibili_cookie
-    return headers
 
 
 class BilibiliDynamic(SourceBase):
@@ -63,7 +46,7 @@ class BilibiliDynamic(SourceBase):
         url = BILIBILI_DYNAMIC_API.format(uid=self.target_id)
         try:
             async with AsyncClient(timeout=15) as client:
-                resp = await client.get(url, headers=_make_headers())
+                resp = await client.get(url, headers=make_headers())
                 resp.raise_for_status()
                 data = resp.json()
         except Exception:
@@ -277,7 +260,7 @@ class BilibiliDynamic(SourceBase):
             async with AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     "https://api.bilibili.com/x/space/wbi/acc/info",
-                    params=params, headers=_make_headers(),
+                    params=params, headers=make_headers(),
                 )
                 if resp.status_code == 200:
                     data = resp.json()

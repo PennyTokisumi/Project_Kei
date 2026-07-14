@@ -54,9 +54,6 @@ class DouyuLive(SourceBase):
 
     async def fetch(self) -> list[Item]:
         """拉取斗鱼直播间状态"""
-        # DIAG: 确认此代码被加载
-        from pathlib import Path
-        Path("H:/Agent/Project/Project_Kei/data/_douyu_fetch_diag").touch()
         self._api_responded = False
         item = await self._fetch_official()
         if item is None and not self._api_responded:
@@ -120,12 +117,6 @@ class DouyuLive(SourceBase):
             return None
 
         room = data.get("room", {})
-        # DIAG: 追加记录每次JSON成功后的数据
-        from pathlib import Path
-        from datetime import datetime
-        diag = f"{datetime.now().strftime('%H:%M:%S')} gid={self.group_id} rid={rid} ss={room.get('show_status')} rst={room.get('rst')}\n"
-        p = Path("H:/Agent/Project/Project_Kei/data/_douyu_room_diag")
-        p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
         if not room:
             return None
 
@@ -135,10 +126,6 @@ class DouyuLive(SourceBase):
 
         # rst=3 表示自动轮播/录像重播，不是真直播
         if room.get("rst", 0) != 0:
-            from pathlib import Path
-            p = Path("H:/Agent/Project/Project_Kei/data/_douyu_rst_diag")
-            p.write_text(f"{room.get('rst')}\n{room.get('show_status')}\n{room.get('room_name','')[:50]}",
-                         encoding="utf-8")
             return None
 
         room_id = str(room.get("room_id", rid))

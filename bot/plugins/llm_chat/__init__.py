@@ -14,7 +14,7 @@ from nonebot import get_driver, on_message
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import Rule, to_me, startswith
 
-from config import config
+from config import config, SENSEI_QQ
 from ..monitor.database import get_setting, set_setting
 
 from .client import llm_client
@@ -329,7 +329,7 @@ free_chat = on_message(rule=Rule(_no_at_rule) & Rule(_llm_on_rule), priority=10)
 @kei_enable_cmd.handle()
 async def handle_kei_enable(event: GroupMessageEvent):
     """开关 LLM 群聊功能（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await kei_enable_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
@@ -390,7 +390,7 @@ async def handle_kei_enable(event: GroupMessageEvent):
 @llm_usage_cmd.handle()
 async def handle_llm_usage(event: GroupMessageEvent):
     """查询今日 token 用量（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await llm_usage_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .database import get_usage_yesterday, get_usage_total
@@ -428,7 +428,7 @@ async def handle_llm_usage(event: GroupMessageEvent):
 @read_cmd.handle()
 async def handle_read(event: GroupMessageEvent, bot: Bot):
     """@Kei read <文件名> — 读取 data/ 下的文件（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await read_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .file_reader import safe_read
@@ -505,7 +505,7 @@ async def handle_read(event: GroupMessageEvent, bot: Bot):
 @memory_cmd.handle()
 async def handle_memory(event: GroupMessageEvent):
     """查看长期记忆列表（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await memory_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     from .database import get_existing_memories
@@ -524,7 +524,7 @@ async def handle_memory(event: GroupMessageEvent):
 @addmem_cmd.handle()
 async def handle_addmem(event: GroupMessageEvent, bot: Bot):
     """remember <imp> <内容> — 直接添加记忆（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await addmem_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
@@ -549,7 +549,7 @@ async def handle_addmem(event: GroupMessageEvent, bot: Bot):
 @edit_cmd.handle()
 async def handle_edit(event: GroupMessageEvent):
     """edit <id> <内容> — 修改记忆内容（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await edit_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
@@ -573,7 +573,7 @@ async def handle_edit(event: GroupMessageEvent):
 @imp_cmd.handle()
 async def handle_imp(event: GroupMessageEvent):
     """imp <id> <数字> — 修改重要性（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await imp_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
@@ -602,7 +602,7 @@ async def handle_imp(event: GroupMessageEvent):
 @forget_cmd.handle()
 async def handle_forget(event: GroupMessageEvent):
     """forget <id> — 删除记忆（仅 Sensei）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await forget_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
@@ -624,7 +624,7 @@ async def handle_forget(event: GroupMessageEvent):
 @sensei_cmd.handle()
 async def handle_sensei(event: GroupMessageEvent):
     """Sensei 专用，显示全部指令（含隐藏指令）"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await sensei_cmd.finish(Message(SENSEI_ONLY_MSG))
     lines = [
         "\n先生の頼みなら……仕方ありませんね。\n既然是老师的请求……那就没办法了呢。",
@@ -744,7 +744,7 @@ async def _fetch_and_save(bot: Bot, group_id: int, count: int = 100,
 @history_cmd.handle()
 async def handle_history(event: GroupMessageEvent, bot: Bot):
     """@Kei history — 拉取历史消息并保存"""
-    if str(event.user_id) != "823262716":
+    if str(event.user_id) != SENSEI_QQ:
         await history_cmd.finish(Message(SENSEI_ONLY_MSG))
 
     text = event.get_plaintext().strip()
