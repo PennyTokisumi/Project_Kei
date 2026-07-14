@@ -111,10 +111,14 @@ async def poll_source(source: SourceBase):
     if is_live:
         for item in new_items:
             try:
-                await send_live_notification(bot, source.group_id, item)
-                # DIAG
+                # DIAG: record before/after send
                 from pathlib import Path
                 from datetime import datetime
+                pre = f"{datetime.now().strftime('%H:%M:%S')} ENTER gid={source.group_id} target={source.target_id}\n"
+                pp = Path("H:/Agent/Project/Project_Kei/data/_push_live_diag")
+                try: pp.write_text((pp.read_text() if pp.exists() else "") + pre, encoding="utf-8")
+                except: pass
+                await send_live_notification(bot, source.group_id, item)
                 diag = f"{datetime.now().strftime('%H:%M:%S')} PUSH OK gid={source.group_id} target={source.target_id}\n"
                 p = Path("H:/Agent/Project/Project_Kei/data/_push_live_diag")
                 p.write_text((p.read_text() if p.exists() else "") + diag, encoding="utf-8")
