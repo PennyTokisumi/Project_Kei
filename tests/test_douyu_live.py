@@ -28,6 +28,13 @@ class TestDouyuFetch:
             },
             status_code=200,
         )
+        # mock 房间页面（fetch 成功后触发 vipId 反向解析）
+        httpx_mock.add_response(
+            url="https://www.douyu.com/617916",
+            text='<html><head><meta property="og:url" content="https://www.douyu.com/617916"></head>'
+                 '<body>window.__NUXT__={"room_id":617916}</body></html>',
+            status_code=200,
+        )
 
         source = DouyuLive("617916", 123456)
         items = await source.fetch()

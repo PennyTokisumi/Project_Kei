@@ -33,14 +33,31 @@ HEADERS = {
 }
 
 
+def _extract_vip_id(html: str) -> str | None:
+    """从房间页面 HTML 中提取 vipId（自定义短 URL）
+
+    斗鱼允许主播设置自定义短 URL（如 douyu.com/6657）。
+    当访问真实房间号页面时，从 og:url / canonical 元数据反向查找。
+    """
+    for pattern in [
+        r'property="og:url"\s+content="[^"]*douyu\.com/(\d+)"',
+        r'rel="canonical"\s+href="[^"]*douyu\.com/(\d+)"',
+    ]:
+        m = re.search(pattern, html)
+        if m and m.group(1):
+            return m.group(1)
+    return None
+
+
 class DouyuLive(SourceBase):
     """斗鱼直播监测源
 
     优先使用斗鱼官方 betard 接口。部分房间使用自定义 URL（vipId），
-    此时会自动从网页解析真实 room_id 再重试。最后回退到第三方镜像。
+    此时会自动双向解析（vipId↔真实 room_id）。最后回退到第三方镜像。
     """
 
     _real_room_id: str | None = None
+    _display_id: str | None = None  # vipId（用于链接展示），懒加载
 
     @property
     def platform(self) -> str:
@@ -49,6 +66,11 @@ class DouyuLive(SourceBase):
     @property
     def source_type(self) -> str:
         return "live"
+
+    @property
+    def display_id(self) -> str:
+        """对外展示的房间号（优先 vipId）"""
+        return self._display_id or self.target_id
 
     # ─── 主入口 ──────────────────────────────────────────
 
@@ -59,29 +81,43 @@ class DouyuLive(SourceBase):
         if item is None and not self._api_responded:
             # 官方 API 无响应才回退到第三方
             item = await self._fetch_fallback()
+        # 成功获取后，尝试反向解析 vipId（如目标配置为真实房间号）
+        if item is not None and self._display_id is None and self._real_room_id is None:
+            await self._resolve_real_room_id()
         return [item] if item else []
 
     # ─── 房间 ID 解析 ────────────────────────────────────
 
     async def _resolve_real_room_id(self) -> str | None:
-        """从斗鱼网页提取真实 room_id（处理 vipId 自定义 URL）
+        """从斗鱼网页提取真实 room_id，同时尝试反向查找 vipId
 
-        斗鱼允许主播设置自定义 URL（如 douyu.com/6657），但 betard
-        API 只认数字 room_id。网页 SSR 数据中包含真实 room_id。
+        正向（vipId→real）：目标 ID 是自定义短 URL，页面含真实 room_id
+        反向（real→vipId）：目标 ID 是真实 room_id，从 og:url 反向提取
         """
         url = f"https://www.douyu.com/{self.target_id}"
         try:
             async with AsyncClient(timeout=10, follow_redirects=True) as client:
                 resp = await client.get(url, headers=HEADERS)
                 html = resp.text
-            m = re.search(r'room_id\D+(\d{5,})', html)
-            if m:
-                rid = m.group(1)
-                if rid != str(self.target_id):
-                    return rid
         except Exception:
-            pass
-        return None
+            return None
+
+        m = re.search(r'room_id\D+(\d{5,})', html)
+        if not m:
+            return None
+
+        real_id = m.group(1)
+
+        if real_id != str(self.target_id):
+            # 正向：target_id 是 vipId
+            self._display_id = self.target_id
+            return real_id
+        else:
+            # 反向：target_id 是真实 room_id，尝试从页面 og:url 找 vipId
+            vip = _extract_vip_id(html)
+            if vip and vip != self.target_id:
+                self._display_id = vip
+            return None
 
     # ─── 官方 API ────────────────────────────────────────
 
@@ -105,7 +141,7 @@ class DouyuLive(SourceBase):
                                 f"斗鱼房间 {self.target_id} → 真实 room_id: {real}"
                             )
                             return await self._fetch_official()
-                        # 解析失败也标记已响应，防止 fallback 绕过
+                        # 非 vipId 且 JSON 解析失败 → 放弃
                         self._api_responded = True
                     nb_logger.debug(
                         f"斗鱼 betard API 返回非 JSON (房间 {rid})"
@@ -138,7 +174,7 @@ class DouyuLive(SourceBase):
             title=room.get("room_name", ""),
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
-            link=f"https://www.douyu.com/{self.target_id}",
+            link=f"https://www.douyu.com/{self.display_id}",
             cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("second_lvl_name", ""),
@@ -181,7 +217,7 @@ class DouyuLive(SourceBase):
             title=room.get("room_name", ""),
             nickname=room.get("owner_name", ""),
             content=room.get("room_name", ""),
-            link=f"https://www.douyu.com/{self.target_id}",
+            link=f"https://www.douyu.com/{self.display_id}",
             cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("game_name", ""),
@@ -223,4 +259,4 @@ class DouyuLive(SourceBase):
         except Exception:
             pass
 
-        return self.target_id
+        return self.display_id
