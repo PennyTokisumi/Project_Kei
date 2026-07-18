@@ -85,7 +85,7 @@ async def handle_add(event: GroupMessageEvent):
         pass
 
     await add_cmd.send(
-        Message(f"\nSensei，已添加监测目标。[{platform}] {name_text}"),
+        Message(f"\nSensei，已添加监测目标。[{platform}] {name_text} ({target_id_int})"),
         at_sender=True,
     )
 
