@@ -227,13 +227,14 @@ class DouyuLive(SourceBase):
     # ─── 显示名 ──────────────────────────────────────────
 
     async def get_display_name(self) -> str:
-        """获取主播名（官方 API 优先）。首次调用时解析真实 room_id。"""
-        # 确保 real_room_id 已解析（vipId 需要转为真实 ID 才能调 API）
+        """获取主播名。先解析 vipId→真实 room_id，再调 API 查名称。"""
+        # Step 1: 尝试解析 vipId（无额外网络开销如果已解析过）
         if self._real_room_id is None:
             await self._resolve_real_room_id()
 
         rid = self._real_room_id or self.target_id
-        # 尝试官方
+
+        # Step 2: 调 betard 官方 API
         try:
             url = DOUYU_API_OFFICIAL.format(room_id=rid)
             async with AsyncClient(timeout=10) as client:
@@ -246,17 +247,13 @@ class DouyuLive(SourceBase):
                         if name:
                             return name
                     elif self._real_room_id is None:
-                        # 返回非 JSON 且无 real_room_id → 可能是 vipId 解析失败
-                        # 不回退，避免 fallback 接受 vipId 返回垃圾数据
-                        nb_logger.debug(
-                            f"斗鱼房间 {self.target_id} betard 返回非 JSON"
-                            "（可能为 vipId），跳过 API 获取名称"
-                        )
+                        # betard 返回非 JSON 且未能解析真实 ID
+                        # → 目标很可能是 vipId，fallback 也会返回脏数据，直接放弃
                         return self.display_id
         except Exception:
             pass
 
-        # 回退
+        # Step 3: 回退到第三方镜像
         try:
             url = DOUYU_API_FALLBACK.format(room_id=rid)
             async with AsyncClient(timeout=10) as client:
@@ -267,7 +264,9 @@ class DouyuLive(SourceBase):
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("error") == 0:
-                        return data["data"].get("owner_name", self.target_id)
+                        name = data["data"].get("owner_name", "")
+                        if name:
+                            return name
         except Exception:
             pass
 
