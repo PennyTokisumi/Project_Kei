@@ -146,6 +146,13 @@ def get_target(target_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def update_target_name(db_id: int, name: str):
+    """更新监测目标的显示名称"""
+    conn = get_conn()
+    conn.execute("UPDATE monitor_targets SET target_name=? WHERE id=?", (name, db_id))
+    conn.commit()
+
+
 def cleanup_old_pushed(days: int = 30):
     """清理 N 天前的推送记录，防止 DB 无限膨胀"""
     conn = get_conn()

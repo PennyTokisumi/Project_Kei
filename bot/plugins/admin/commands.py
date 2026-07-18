@@ -10,9 +10,9 @@ from nonebot.rule import to_me, startswith
 from config import config, VERSION
 from ..monitor.database import (
     add_target, remove_target, list_targets,
-    get_setting, set_setting,
+    get_setting, set_setting, update_target_name,
 )
-from ..monitor.scheduler import reload_targets
+from ..monitor.scheduler import reload_targets, SOURCE_FACTORY as _SOURCE_FACTORY
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=3)
@@ -69,9 +69,23 @@ async def handle_add(event: GroupMessageEvent):
         )
 
     # 添加
-    add_target(group_id, platform, str(target_id_int), "")
+    rid = add_target(group_id, platform, str(target_id_int), "")
+    name_text = str(target_id_int)
+
+    # 尝试解析显示名（主播名/用户名）
+    try:
+        cls = _SOURCE_FACTORY.get(platform)
+        if cls:
+            source = cls(str(target_id_int), group_id)
+            display = await source.get_display_name()
+            if display and display != str(target_id_int):
+                update_target_name(rid, display)
+                name_text = display
+    except Exception:
+        pass
+
     await add_cmd.send(
-        Message(f"\nSensei，已添加监测目标。[{platform}] ID: {target_id_int}"),
+        Message(f"\nSensei，已添加监测目标。[{platform}] {name_text}"),
         at_sender=True,
     )
 
@@ -93,8 +107,16 @@ async def handle_list(event: GroupMessageEvent):
 
     lines = ["\nSensei，以下是正在监测的目标。"]
     for idx, t in enumerate(targets, 1):
-        name = t.get("target_name") or t["target_id"]
-        lines.append(f"  {idx}. [{t['platform']}] {name}")
+        tid = t["target_id"]
+        name = t.get("target_name") or ""
+        if name and name != tid:
+            display = f"{name} ({tid})"
+        else:
+            display = tid
+        plat = t['platform']
+        # 平台简称
+        plat_short = {"bilibili_dynamic": "B站动态", "bilibili_live": "B站直播", "douyu_live": "斗鱼直播"}.get(plat, plat)
+        lines.append(f"  {idx}. [{plat_short}] {display}")
 
     await list_cmd.finish(
         Message("\n".join(lines)),

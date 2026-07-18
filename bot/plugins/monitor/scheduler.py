@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from nonebot import get_bot, logger as nb_logger
 
 from config import config
-from .database import cleanup_old_pushed, init_db, list_targets
+from .database import cleanup_old_pushed, init_db, list_targets, update_target_name
 from .dedup import dedup
 from .formatter import send_live_notification, send_dynamic_forward
 from .sources.base import SourceBase
@@ -148,6 +148,24 @@ def _make_source(target: dict) -> Optional[SourceBase]:
     return cls(target_id, group_id)
 
 
+async def _backfill_names():
+    """回填空白的 target_name（逐个解析，失败不影响其他）"""
+    targets = list_targets()
+    for t in targets:
+        if t.get("target_name"):
+            continue
+        source = _make_source(t)
+        if source is None:
+            continue
+        try:
+            name = await source.get_display_name()
+            if name and name != t["target_id"]:
+                update_target_name(t["id"], name)
+                nb_logger.info(f"回填名称: {t['platform']}/{t['target_id']} → {name}")
+        except Exception:
+            pass
+
+
 async def start():
     """启动调度器：初始化 DB → 清理 → 加载所有目标 → 注册定时任务"""
     init_db()
@@ -161,6 +179,9 @@ async def start():
     if scheduler.running:
         nb_logger.warning("调度器已在运行，跳过")
         return
+
+    # 回填空白的显示名称
+    await _backfill_names()
 
     targets = list_targets()
     update_status(targets_total=len(targets), alive=True)
