@@ -245,6 +245,14 @@ class DouyuLive(SourceBase):
                         name = data.get("room", {}).get("owner_name", "")
                         if name:
                             return name
+                    elif self._real_room_id is None:
+                        # 返回非 JSON 且无 real_room_id → 可能是 vipId 解析失败
+                        # 不回退，避免 fallback 接受 vipId 返回垃圾数据
+                        nb_logger.debug(
+                            f"斗鱼房间 {self.target_id} betard 返回非 JSON"
+                            "（可能为 vipId），跳过 API 获取名称"
+                        )
+                        return self.display_id
         except Exception:
             pass
 
