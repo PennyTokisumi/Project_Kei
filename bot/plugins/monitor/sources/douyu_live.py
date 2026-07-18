@@ -227,7 +227,11 @@ class DouyuLive(SourceBase):
     # ─── 显示名 ──────────────────────────────────────────
 
     async def get_display_name(self) -> str:
-        """获取主播名（官方 API 优先）"""
+        """获取主播名（官方 API 优先）。首次调用时解析真实 room_id。"""
+        # 确保 real_room_id 已解析（vipId 需要转为真实 ID 才能调 API）
+        if self._real_room_id is None:
+            await self._resolve_real_room_id()
+
         rid = self._real_room_id or self.target_id
         # 尝试官方
         try:

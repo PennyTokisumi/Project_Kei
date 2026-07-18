@@ -130,6 +130,13 @@ class TestDouyuDisplayName:
             },
             status_code=200,
         )
+        # mock 房间页面（get_display_name 内部会懒解析 room_id）
+        httpx_mock.add_response(
+            url="https://www.douyu.com/617916",
+            text='<html><head><meta property="og:url" content="https://www.douyu.com/617916"></head>'
+                 '<body>window.__NUXT__={"room_id":617916}</body></html>',
+            status_code=200,
+        )
 
         source = DouyuLive("617916", 123456)
         name = await source.get_display_name()
@@ -153,6 +160,13 @@ class TestDouyuDisplayName:
                 "error": 0,
                 "data": {"owner_name": "备用名字"},
             },
+            status_code=200,
+        )
+        # mock 房间页面（get_display_name 内部会懒解析 room_id）
+        httpx_mock.add_response(
+            url="https://www.douyu.com/617916",
+            text='<html><head><meta property="og:url" content="https://www.douyu.com/617916"></head>'
+                 '<body>window.__NUXT__={"room_id":617916}</body></html>',
             status_code=200,
         )
 
