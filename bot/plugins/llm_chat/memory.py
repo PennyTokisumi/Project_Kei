@@ -112,7 +112,7 @@ class MemoryManager:
         _now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
         messages.append({
             "role": "system",
-            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。角色为 assistant 的消息是你自己发出的。消息按时间排序，最后一条（无时间戳）是最新消息。请以 Kei 的身份自然回复，不要输出群号。"
+            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。聊天记录按时间分组显示：── MM-DD HH:MM ── 是系统时间分隔符，冒号后是该时间段内的消息正文。带有（刚刚）标记的是当前最新消息。角色 assistant 的消息是你自己发出的。请以 Kei 的身份自然回复。"
         })
 
         # 长期记忆：按重要性取前 20 条
@@ -130,7 +130,13 @@ class MemoryManager:
             cur_entry = (ev_time, "user", f"{sender_name}: {current_msg}")
             short.append(cur_entry)
         short.sort(key=lambda x: x[0])
-        for _, role, text in short:
+        _last_ts = 0
+        for ev_ts, role, text in short:
+            if _last_ts == 0 or (ev_ts - _last_ts) > 300:
+                tag = "（刚刚）" if ev_ts >= 9999999998 else ""
+                t_str = datetime.fromtimestamp(ev_ts, tz=timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")
+                messages.append({"role": "system", "content": f"── {t_str}{tag} ──"})
+                _last_ts = ev_ts
             messages.append({"role": role, "content": text})
 
         return messages
