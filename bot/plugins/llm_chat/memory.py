@@ -14,8 +14,7 @@ from .database import (
     cleanup_short_term,
     load_all_short_term_groups,
 )
-from config import config
-from .persona import PERSONA_PROMPT_DS, PERSONA_PROMPT_GM
+from .persona import PERSONA_PROMPT
 
 # {group_id: deque(maxlen=10)}，元素为 (ev_time, role, text)
 _short_term: dict[int, deque] = {}
@@ -24,7 +23,7 @@ _short_term: dict[int, deque] = {}
 _last_speak_time: dict[int, float] = {}
 
 # 冷却时间（秒），避免刷屏
-COOLDOWN_SECONDS = 5
+COOLDOWN_SECONDS = 3
 
 
 
@@ -105,7 +104,7 @@ class MemoryManager:
                       sender_name: str = "某人",
                       ev_time: int = 9999999999) -> list[dict]:
         """构建发给 LLM 的完整 messages 数组"""
-        prompt = PERSONA_PROMPT_GM if config.is_gemini else PERSONA_PROMPT_DS
+        prompt = PERSONA_PROMPT
         messages = [{"role": "system", "content": prompt}]
 
         # 当前群标识 + 时间
