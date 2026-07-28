@@ -31,17 +31,14 @@ _MAX_TOOL_RESULT_CHARS = 4000
 _TZ_CST = timezone(timedelta(hours=8))
 
 _TRANSITIONS = [
-    "老师等一下哦，这个问题我需要去请教下Claude先生~",
-    "ふん……这个有点复杂，让我问问Claude先生……",
-    "稍等哦老师，我请Claude先生帮忙看看~",
-    "这个 Kei 自己搞不定呢……我去请教一下 Claude 先生！",
-    "ちちょっと待ってくださいね、Sensei~",
-    "嗯…让我想想……还是去问问Claude先生比较靠谱~",
-    "这个问题有点难度呢，老师稍等，我去求助Claude先生！",
-    "む……超出我的能力范围了，让我问问Claude先生……",
-    "はぁ…又到了麻烦Claude先生的时候了呢。老师稍等哦~",
-    "哼哼，这种问题当然是交给Claude先生啦，老师等我一下~",
-    "ちょっと待って、Claude先生に聞いてみる……",
+    "好的，我去问一下Claude先生~",
+    "はい~我去请教下Claude桑~",
+    "稍等哦老师，我去问问Claude先生~",
+    "了解，我去找Claude先生帮忙~",
+    "ちょっと待ってね、Claude先生に聞いてみる~",
+    "明白，我问问Claude前辈~",
+    "りょうかい~我去请教下Claude~",
+    "了解です、Claude先生のところへ~",
 ]
 
 _claude_semaphore = asyncio.Semaphore(1)
