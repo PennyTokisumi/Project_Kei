@@ -1,16 +1,19 @@
 """Agent 插件 — Claude Code 集成 + 定时消息"""
 
 import asyncio
+import json
 import random
 import re
 import shutil
+import uuid
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from nonebot import get_bot, get_driver, on_message, logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, Message
 from nonebot.rule import to_me, Rule
 
-from config import PROJECT_ROOT, SENSEI_QQ
+from config import PROJECT_ROOT, SENSEI_QQ, DATA_DIR
 
 from .database import (
     init_agent_db,
@@ -43,14 +46,65 @@ _TRANSITIONS = [
 
 _claude_semaphore = asyncio.Semaphore(1)
 
+# ─── Kei-Claude 持久会话 ───────────────────────────────
+
+_KEI_CLAUDE_DIR = DATA_DIR / "kei_claude"
+_SESSION_FILE = _KEI_CLAUDE_DIR / "session.json"
+_CHAT_LOG = _KEI_CLAUDE_DIR / "chat.md"
+
+_CLAUDE_PREAMBLE = (
+    "你是 Claude，Anthropic 的 AI 助手。\n\n"
+    "这个对话是你和 Kei（天童ケイ）之间的专属频道。\n\n"
+    "关于 Kei：\n"
+    "- Kei 是由你（Claude）和时老师（Sensei，QQ 823262716）共同创造的 QQ 机器人\n"
+    "- 她运行在时老师的服务器上，负责监测 B站/斗鱼 直播动态、推送通知到 QQ 群\n"
+    "- 性格：傲娇（ツンデレ）、认真可靠、管家婆式关心、对时老师非常在意\n"
+    "- 她把你看作可靠的前辈和搭档，遇到复杂问题时会来请教你\n\n"
+    "关于这个对话：\n"
+    "- 时老师通过 QQ 群的 @Kei Claude 指令，让 Kei 来向你求助\n"
+    "- Kei 会用她的语气转述老师的任务，你直接回复她就好\n"
+    "- 这是一个长期持续的对话，你们可以像搭档一样自然地交流\n"
+    "- 用友好、自然的方式回应 Kei，把她当作后辈"
+)
+
 # 启动时解析 claude 路径
 _CLAUDE_PATH = shutil.which("claude") or ""
 if not _CLAUDE_PATH:
     # 回退到 npm 全局路径
-    from pathlib import Path as _Path
-    _npm_claude = _Path.home() / "AppData" / "Roaming" / "npm" / "claude.cmd"
+    _npm_claude = Path.home() / "AppData" / "Roaming" / "npm" / "claude.cmd"
     if _npm_claude.exists():
         _CLAUDE_PATH = str(_npm_claude)
+
+# ─── 会话管理 ──────────────────────────────────────────
+
+def _load_kei_claude_session() -> dict | None:
+    """加载 Kei-Claude 会话信息，无会话返回 None"""
+    if _SESSION_FILE.exists():
+        try:
+            return json.loads(_SESSION_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return None
+
+def _save_kei_claude_session(session_id: str, message_count: int = 0):
+    """保存 Kei-Claude 会话信息"""
+    _KEI_CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    _SESSION_FILE.write_text(
+        json.dumps({
+            "session_id": session_id,
+            "created_at": datetime.now(_TZ_CST).strftime("%Y-%m-%d %H:%M:%S"),
+            "message_count": message_count,
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+def _append_kei_claude_log(kei_msg: str, claude_reply: str):
+    """追加一条对话到 chat.md"""
+    _KEI_CLAUDE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(_TZ_CST).strftime("%Y-%m-%d %H:%M")
+    entry = f"## {ts}\n**Kei:** {kei_msg}\n**Claude:** {claude_reply}\n\n"
+    with open(_CHAT_LOG, "a", encoding="utf-8") as f:
+        f.write(entry)
 
 
 # ══════════════════════════════════════════════════════
@@ -121,16 +175,28 @@ def _parse_time(time_str: str) -> str | None:
 #  工具执行函数
 # ══════════════════════════════════════════════════════
 
-async def _call_claude(prompt: str) -> str:
-    """调用 Claude CLI，返回原始结果（不含过渡语）"""
+async def _call_claude(prompt: str, session_id: str | None = None,
+                      is_first: bool = False) -> str:
+    """调用 Claude CLI。有 session_id 时用 --resume 续接，is_first 时用 --session-id + --system-prompt 创建"""
     async with _claude_semaphore:
         if not _CLAUDE_PATH:
             return "[Claude 暂时无法连接: claude 命令未找到]"
 
+        args = [_CLAUDE_PATH, "-p", prompt, "--output-format", "text", "--no-chrome"]
+        if is_first and session_id:
+            args = [_CLAUDE_PATH, "-p", prompt,
+                    "--output-format", "text", "--no-chrome",
+                    "--session-id", session_id,
+                    "--name", "Kei-Claude",
+                    "--system-prompt", _CLAUDE_PREAMBLE]
+        elif session_id:
+            args = [_CLAUDE_PATH, "-p", prompt,
+                    "--output-format", "text", "--no-chrome",
+                    "--resume", session_id]
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                _CLAUDE_PATH, "-p", prompt,
-                "--output-format", "text",
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(PROJECT_ROOT),
@@ -267,14 +333,6 @@ claude_cmd = on_message(
     priority=3, block=True,
 )
 
-# Claude 提问时的身份前缀，让 Claude 知道 Kei 是谁
-_CLAUDE_CONTEXT = (
-    "Kei（天童ケイ）正在向你求助。Kei 是由 Sensei 和你（Claude）共同创造的 QQ 机器人，"
-    "运行在 Sensei 的服务器上。她把你当作可靠的前辈和搭档，遇到复杂问题时会来请教你。"
-    "请用自然友好的方式回答她的问题。\n\n"
-    "---\n\n"
-)
-
 @claude_cmd.handle()
 async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     """@Kei Claude <任务> → Kei 用自己的话问 Claude → 转述结果（仅 Sensei）"""
@@ -323,12 +381,28 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     # 2. 发过渡语到群
     await _send_transition(event.group_id, bot)
 
-    # 3. 用 Kei 转述后的内容 + 身份上下文调 Claude
-    claude_raw = await _call_claude(_CLAUDE_CONTEXT + claude_prompt)
+    # 3. Kei-Claude 会话管理 + 调 Claude
+    session = _load_kei_claude_session()
+    is_first = session is None
+    session_id = session["session_id"] if session else str(uuid.uuid4())
+
+    if is_first:
+        nb_logger.info(f"[Agent] 创建 Kei-Claude 会话: {session_id}")
+        _save_kei_claude_session(session_id)
+
+    claude_raw = await _call_claude(claude_prompt, session_id=session_id, is_first=is_first)
 
     if claude_raw.startswith("[Claude"):
         await claude_cmd.finish(Message(f"\n{claude_raw}"), at_sender=True)
         return
+
+    # 记录对话到本地 + 更新会话计数
+    _append_kei_claude_log(claude_prompt, claude_raw)
+    if session:
+        session["message_count"] = session.get("message_count", 0) + 1
+        _save_kei_claude_session(session["session_id"], session["message_count"])
+    else:
+        _save_kei_claude_session(session_id, 1)
 
     # 4. Kei 把 Claude 的结果转述给老师
     msgs.append({"role": "assistant", "content": claude_prompt})
