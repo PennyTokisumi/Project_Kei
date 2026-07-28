@@ -426,7 +426,7 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
     if len(kei_reply) > 2000:
         kei_reply = kei_reply[:2000] + "\n\n[结果过长，已截断]"
 
-    memory.add_assistant_message(event.group_id, f"[Claude回复] {kei_reply[:200]}")
+    mem_mgr.add_assistant_message(event.group_id, f"[Claude回复] {kei_reply[:200]}")
     await claude_cmd.finish(Message(f"\n{kei_reply}"), at_sender=True)
 
 
