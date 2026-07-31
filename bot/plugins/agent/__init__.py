@@ -691,11 +691,6 @@ async def handle_daily(event: GroupMessageEvent):
     if not scheduler.running:
         scheduler.start()
 
-    try:
-        scheduler.remove_job(job_id)
-    except Exception:
-        pass
-
     scheduler.add_job(
         _send_daily_callback,
         CronTrigger(hour=hour, minute=minute, timezone=_TZ_CST),
