@@ -310,6 +310,75 @@ async def _send_scheduled_callback(
 
 
 # ══════════════════════════════════════════════════════
+#  每日公告
+# ══════════════════════════════════════════════════════
+
+async def _send_daily_callback(group_id: int, content: str):
+    """APScheduler 回调：发送每日公告"""
+    try:
+        bot = get_bot()
+    except Exception:
+        nb_logger.error(f"[Agent] 每日公告发送失败 group={group_id}: Bot 未就绪")
+        return
+    try:
+        await bot.send_group_msg(group_id=group_id, message=content)
+        nb_logger.info(f"[Agent] 每日公告已发送 group={group_id}")
+    except Exception as e:
+        nb_logger.error(f"[Agent] 每日公告发送失败 group={group_id}: {e}")
+
+
+async def _restore_daily_schedules():
+    """启动时恢复所有群的每日公告"""
+    from ..monitor.database import get_conn as _mon_conn
+    from plugins.monitor.scheduler import scheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    rows = _mon_conn().execute(
+        "SELECT key, value FROM settings WHERE key LIKE 'daily_msg_%'"
+    ).fetchall()
+
+    if not rows:
+        return
+
+    if not scheduler.running:
+        scheduler.start()
+
+    restored = 0
+    for row in rows:
+        value = row["value"]
+        if not value or "|" not in value:
+            continue
+
+        gid_str = row["key"].replace("daily_msg_", "")
+        try:
+            gid = int(gid_str)
+        except ValueError:
+            continue
+
+        time_str, content = value.split("|", 1)
+        if len(time_str) != 4:
+            continue
+        try:
+            hour = int(time_str[:2])
+            minute = int(time_str[2:])
+        except ValueError:
+            continue
+
+        job_id = f"daily_{gid}"
+        scheduler.add_job(
+            _send_daily_callback,
+            CronTrigger(hour=hour, minute=minute, timezone=_TZ_CST),
+            id=job_id,
+            args=[gid, content],
+            replace_existing=True,
+        )
+        restored += 1
+
+    if restored:
+        nb_logger.info(f"[Agent] 恢复了 {restored} 条每日公告")
+
+
+# ══════════════════════════════════════════════════════
 #  @Kei Claude — 直接调用 Claude Code
 # ══════════════════════════════════════════════════════
 
@@ -550,6 +619,99 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
 
 
 # ══════════════════════════════════════════════════════
+#  @Kei daily — 每日公告
+# ══════════════════════════════════════════════════════
+
+def _daily_rule(event: GroupMessageEvent) -> bool:
+    return event.get_plaintext().strip().lower().startswith("daily")
+
+daily_cmd = on_message(
+    rule=to_me() & Rule(_daily_rule),
+    priority=3, block=True,
+)
+
+
+@daily_cmd.handle()
+async def handle_daily(event: GroupMessageEvent):
+    """@Kei daily <HHMM> <内容> — 设定每日定时公告；@Kei daily off — 关闭"""
+    from ..monitor.database import set_setting
+    from plugins.monitor.scheduler import scheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    text = event.get_plaintext().strip()
+    if text.lower().startswith("daily"):
+        text = text[5:].strip()
+
+    key = f"daily_msg_{event.group_id}"
+    job_id = f"daily_{event.group_id}"
+
+    if not text or text.lower() == "off":
+        set_setting(key, "")
+        try:
+            scheduler.remove_job(job_id)
+        except Exception:
+            pass
+        nb_logger.info(f"[Agent] 每日公告已关闭 group={event.group_id}")
+        await daily_cmd.finish(Message("\n已关闭本群每日公告。"), at_sender=True)
+        return
+
+    # 解析: HHMM 内容
+    parts = text.split(None, 1)
+    if len(parts) < 2 or not re.match(r'^\d{3,4}$', parts[0]):
+        await daily_cmd.finish(
+            Message("格式: @Kei daily <时间> <内容>\n"
+                    "示例: @Kei daily 0800 早上好\n"
+                    "关闭: @Kei daily off"),
+            at_sender=True,
+        )
+        return
+
+    time_str = parts[0]
+    content = parts[1].strip()
+
+    # 统一为 4 位 HHMM
+    if len(time_str) == 3:
+        time_str = "0" + time_str
+
+    try:
+        hour = int(time_str[:2])
+        minute = int(time_str[2:])
+    except ValueError:
+        await daily_cmd.finish(Message("时间格式错误，请用 HHMM 格式，如 0800。"), at_sender=True)
+        return
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        await daily_cmd.finish(Message("时间范围错误。"), at_sender=True)
+        return
+
+    # 保存设置
+    set_setting(key, f"{time_str}|{content}")
+
+    # 注册/更新 job
+    if not scheduler.running:
+        scheduler.start()
+
+    try:
+        scheduler.remove_job(job_id)
+    except Exception:
+        pass
+
+    scheduler.add_job(
+        _send_daily_callback,
+        CronTrigger(hour=hour, minute=minute, timezone=_TZ_CST),
+        id=job_id,
+        args=[event.group_id, content],
+        replace_existing=True,
+    )
+
+    nb_logger.info(f"[Agent] 每日公告 group={event.group_id} {time_str} content={content[:50]}")
+    await daily_cmd.finish(
+        Message(f"\n已设定每日公告：{time_str[:2]}:{time_str[2:]} → 「{content}」"),
+        at_sender=True,
+    )
+
+
+# ══════════════════════════════════════════════════════
 #  生命周期
 # ══════════════════════════════════════════════════════
 
@@ -632,4 +794,5 @@ async def _agent_startup():
     init_agent_db()
     await _seed_kei_claude_memory()
     await _restore_scheduled()
+    await _restore_daily_schedules()
     nb_logger.info("[Agent] 插件已启动")
