@@ -641,7 +641,6 @@ async def handle_sensei(event: GroupMessageEvent):
         "add douyu_live <房间号>  -  添加斗鱼直播监测",
         "remind <时间> <内容>  -  设定定时提醒",
         "daily <HHMM> <内容>  -  设定每日定时公告",
-        "daily off  -  关闭每日公告",
         "",
         "── 以下为 Sensei 专用隐藏指令 ──",
         "",
