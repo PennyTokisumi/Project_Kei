@@ -221,6 +221,8 @@ class DouyuLive(SourceBase):
             cover_url=_fix_cover(cover),
             extra={
                 "game_name": room.get("game_name", ""),
+                # fallback 接口无 rst/videoLoop 字段，无法区分真直播和录播轮播
+                "is_fallback": True,
             },
         )
 

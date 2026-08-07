@@ -61,6 +61,12 @@ async def poll_source(source: SourceBase):
 
     for item in items:
         if is_live:
+            if item.extra.get("is_fallback"):
+                # fallback 接口无 rst/videoLoop 字段，无法区分真直播和录播轮播。
+                # 跳过推送与状态更新，避免下播转轮播时误报开播；
+                # 官方 API 恢复后状态自然延续（真开播 rst=0 → off→on → 推送）。
+                nb_logger.debug(f"fallback 结果跳过 (可能为轮播): {source.platform}/{item.target_id}")
+                continue
             # 直播类：不做 dedup 去重，交给 LiveStatusTracker 做 off→on 检测
             tracker = LiveStatusTracker(item.target_id, item.platform,
                                         group_id=source.group_id)
