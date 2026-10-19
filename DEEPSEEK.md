@@ -261,10 +261,15 @@ Node        : v24.17.0（SnowLuma 2.x 要求 ≥ 24）
 SnowLuma 备份: snowluma_v1.12.9_backup/
 ```
 
-### 还没验证过的唯一关键路径
-**`send_group_forward_msg`（B站动态合并转发）在 SnowLuma 2.0.3 上尚未实际跑过。**
-启动问候走的是 `send_group_msg`，已验证正常。合并转发是 2.0 改动最多的部分
-（v1.14.13/.14/.17/.21 连续在修），需要一个真实的 B站动态事件来确认：
-转发能展开、**不丢图**、引用预览正常。
+### 推送路径验证状态（2026-10-19）
+SnowLuma 2.0.3 上的两条推送路径**均已实测通过**：
 
-如果这一步有问题，现在回滚成本还很低。
+- **`send_group_forward_msg`（B站动态合并转发）** ✅ 用户以真实 B站动态触发，
+  转发正常展开、图片未丢。这是 2.0 改动最多的部分（v1.14.13/.14/.17/.21 连续在修），
+  验证通过意味着升级最关键的兼容性风险已排除。
+- **`send_group_msg`（B站直播 / 斗鱼直播 图文消息）** ✅ 开机问候与 @ 回复均走此路径。
+
+代码上 `send_group_forward_msg` **全项目只有一处调用**：`monitor/formatter.py::send_dynamic_forward()`。
+两个直播源（`bilibili_live` / `douyu_live`）的 `source_type` 都是 `live`，
+在 `scheduler.poll_source()` 里经 `is_live` 分派到 `send_live_notification()`（普通图文）。
+因此**只有 B站动态走合并转发**，即使只有 1 条动态也用转发。
