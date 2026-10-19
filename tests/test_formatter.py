@@ -267,14 +267,24 @@ class TestForwardPreview:
         base.update(kw)
         return Item(**base)
 
-    def test_source_and_summary(self):
+    def test_single_item_title_carries_nickname(self):
+        """单条时标题行是「谁做了什么」，预览行是内容标题"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        preview = build_forward_preview([self._item()])
+        assert preview["source"] == "谷雨_CSU发布了动态"
+        assert preview["summary"] == "查看 1 条转发消息"
+        # prompt 实测无效，不应再传
+        assert "prompt" not in preview
+
+    def test_multi_item_title_is_summary(self):
+        """多条时标题行退化为汇总，昵称下沉到预览行"""
         from plugins.monitor.formatter import build_forward_preview
 
         preview = build_forward_preview([self._item(), self._item()])
-        assert preview["source"] == "B站动态"
+        assert preview["source"] == "B站动态 · 2 条更新"
         assert preview["summary"] == "查看 2 条转发消息"
-        # prompt 实测无效，不应再传
-        assert "prompt" not in preview
+        assert preview["news"][0]["text"].startswith("谷雨_CSU 发布了动态")
 
     def test_news_aligned_with_items(self):
         """news 必须与节点一一对应"""
@@ -285,29 +295,41 @@ class TestForwardPreview:
         for entry in preview["news"]:
             assert set(entry) == {"text"}
 
-    def test_video_line(self):
+    def test_video_single(self):
+        """视频投稿：标题行说投稿，预览行给视频标题"""
         from plugins.monitor.formatter import build_forward_preview
 
         item = self._item(extra={"is_video": True, "video_title": "【MMD】测试视频"})
-        text = build_forward_preview([item])["news"][0]["text"]
-        assert text == "谷雨_CSU 投稿了视频 · 【MMD】测试视频"
+        preview = build_forward_preview([item])
+        assert preview["source"] == "谷雨_CSU投稿了视频"
+        assert preview["news"][0]["text"] == "标题：【MMD】测试视频"
 
-    def test_article_line(self):
+    def test_video_falls_back_to_dynamic_title(self):
+        """视频没有独立标题时退回动态标题"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(title="动态里的标题", extra={"is_video": True})
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text == "标题：动态里的标题"
+
+    def test_article_single(self):
         from plugins.monitor.formatter import build_forward_preview
 
         item = self._item(extra={"is_article": True, "article_title": "周年庆专栏"})
-        text = build_forward_preview([item])["news"][0]["text"]
-        assert text == "谷雨_CSU 投稿了专栏 · 周年庆专栏"
+        preview = build_forward_preview([item])
+        assert preview["source"] == "谷雨_CSU投稿了专栏"
+        assert preview["news"][0]["text"] == "标题：周年庆专栏"
 
-    def test_draw_line_uses_first_line(self):
-        """图文动态取正文第一行"""
+    def test_draw_single(self):
+        """图文动态：标题行说发布了动态，预览行给正文首行"""
         from plugins.monitor.formatter import build_forward_preview
 
         item = self._item(content="今天画了新的图\n第二行不需要")
-        text = build_forward_preview([item])["news"][0]["text"]
-        assert text == "谷雨_CSU：今天画了新的图"
+        preview = build_forward_preview([item])
+        assert preview["source"] == "谷雨_CSU发布了动态"
+        assert preview["news"][0]["text"] == "今天画了新的图"
 
-    def test_forward_line_strips_duplicate_nickname(self):
+    def test_forward_strips_duplicate_nickname(self):
         """转发动态正文自带「昵称：」前缀，预览行不应重复昵称"""
         from plugins.monitor.formatter import build_forward_preview
 
@@ -315,16 +337,16 @@ class TestForwardPreview:
             content="谷雨_CSU：说点什么\n----------\n原作者的正文",
             extra={"is_forward": True},
         )
-        text = build_forward_preview([item])["news"][0]["text"]
-        assert text == "谷雨_CSU 转发了动态 · 说点什么"
-        assert text.count("谷雨_CSU") == 1
+        preview = build_forward_preview([item])
+        assert preview["source"] == "谷雨_CSU转发了动态"
+        assert preview["news"][0]["text"] == "说点什么"
 
     def test_empty_content_fallback(self):
-        """空正文时给兜底文案，不能出现空的预览行"""
+        """空正文时预览行不能为空"""
         from plugins.monitor.formatter import build_forward_preview
 
         text = build_forward_preview([self._item(content="")])["news"][0]["text"]
-        assert text == "谷雨_CSU 发布了动态"
+        assert text == "发布了动态"
 
     def test_long_text_clipped(self):
         """超长正文会截断，避免在客户端里被随机位置切断"""
@@ -343,3 +365,70 @@ class TestForwardPreview:
         text = build_forward_preview([item])["news"][0]["text"]
         assert "\n" not in text
         assert "  " not in text
+
+
+class TestDynamicNodeContent:
+    """节点正文结构：昵称不再重复，顺序按类型区分"""
+
+    @staticmethod
+    def _item(**kw):
+        base = dict(
+            id="1", platform="bilibili", source_type="dynamic",
+            target_id="436742", title="标题", nickname="谷雨_CSU",
+            content="", link="https://t.bilibili.com/1",
+        )
+        base.update(kw)
+        return Item(**base)
+
+    def _text_of(self, node) -> str:
+        return "".join(
+            seg.data for seg in node["data"]["content"]
+            if isinstance(seg, FakeMessageSegment) and seg.type == "text"
+        )
+
+    def _images_of(self, node) -> int:
+        return sum(
+            1 for seg in node["data"]["content"]
+            if isinstance(seg, FakeMessageSegment) and seg.type == "image"
+        )
+
+    def test_video_node_order(self):
+        """视频投稿：标题 → 封面 → 简介 → 链接，且不再重复昵称"""
+        from plugins.monitor.formatter import build_dynamic_forward_msg
+
+        item = self._item(
+            extra={"is_video": True, "video_title": "视频标题", "video_desc": "视频简介"},
+            cover_url="https://example.com/c.jpg", cover_urls=["https://example.com/c.jpg"],
+        )
+        node = build_dynamic_forward_msg([item])[0]
+        text = self._text_of(node)
+        assert "标题：视频标题" in text
+        assert "简介：视频简介" in text
+        assert "链接：" in text
+        # 昵称只出现在节点名里，不应再进正文
+        assert "谷雨_CSU" not in text
+        assert "投稿了视频" not in text
+        assert self._images_of(node) == 1
+        assert node["data"]["name"] == "谷雨_CSU"
+
+    def test_article_node_has_no_source_line(self):
+        """专栏：不再有「来源：昵称」行（节点名已承担）"""
+        from plugins.monitor.formatter import build_dynamic_forward_msg
+
+        item = self._item(
+            extra={"is_article": True, "article_title": "专栏标题"},
+            cover_url="https://example.com/c.jpg", cover_urls=["https://example.com/c.jpg"],
+        )
+        text = self._text_of(build_dynamic_forward_msg([item])[0])
+        assert "标题：专栏标题" in text
+        assert "来源：" not in text
+        assert "谷雨_CSU" not in text
+
+    def test_draw_node_has_no_source_line(self):
+        """图文/转发：不再有「来源：昵称」行"""
+        from plugins.monitor.formatter import build_dynamic_forward_msg
+
+        item = self._item(content="正文内容")
+        text = self._text_of(build_dynamic_forward_msg([item])[0])
+        assert "正文内容" in text
+        assert "来源：" not in text

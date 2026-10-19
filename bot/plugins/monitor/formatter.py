@@ -36,38 +36,33 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
 
     即使只有 1 条动态，也以合并转发形式推送。
     每条动态作为一个独立的消息节点（node）。
+
+    节点正文不再重复昵称 —— 昵称由卡片标题（``source``）和节点发送者名承担。
+    各类顺序：
+        视频投稿：标题 → 封面 → 简介 → （正文） → 链接
+        专栏文章：标题 → 封面 → 链接
+        图文/转发：正文 → 图片 → 链接
     """
     nodes = []
     for item in items:
         content_parts = []
 
         if item.extra.get("is_video"):
-            # 视频投稿专用格式
-            parts = [f"{item.nickname}投稿了视频"]
-            # 动态正文（如有）
-            if item.content:
-                parts.append(item.content)
-            content_parts.append(MessageSegment.text("\n".join(parts) + "\n"))
-            # 封面图
+            vid_title = item.extra.get("video_title", "") or item.title
+            content_parts.append(MessageSegment.text(f"标题：{vid_title}\n"))
             if item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
-            # 视频标题
-            vid_title = item.extra.get("video_title", "") or item.title
-            content_parts.append(MessageSegment.text(f"\n标题：{vid_title}"))
-            # 简介
             video_desc = item.extra.get("video_desc", "")
             content_parts.append(MessageSegment.text(f"\n简介：{video_desc}"))
-            # 链接
+            # 动态附带的正文（如有），放在简介之后
+            if item.content:
+                content_parts.append(MessageSegment.text(f"\n{item.content}"))
             content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
         elif item.extra.get("is_article"):
-            # 专栏投稿专用格式
-            content_parts.append(MessageSegment.text(f"{item.nickname}投稿了文章\n"))
+            art_title = item.extra.get("article_title", "") or item.title
+            content_parts.append(MessageSegment.text(f"标题：{art_title}\n"))
             if item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
-            art_title = item.extra.get("article_title", "") or item.title
-            content_parts.append(MessageSegment.text(f"\n标题：{art_title}"))
-            if item.nickname:
-                content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
             content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
         else:
             # 图文/文字/转发格式
@@ -78,8 +73,6 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
                     content_parts.append(MessageSegment.image(url))
             elif item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
-            if item.nickname:
-                content_parts.append(MessageSegment.text(f"\n来源：{item.nickname}"))
             content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
 
         node = {
@@ -176,28 +169,30 @@ def _clip(text: str, limit: int = _NEWS_LINE_LIMIT) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def _news_line(item: Item) -> str:
-    """为一条动态生成合并转发的预览行文案"""
-    nickname = item.nickname or "B站用户"
-
+def _type_phrase(item: Item) -> str:
+    """这条动态「做了什么」——用作卡片标题行的谓语"""
     if item.extra.get("is_video"):
-        title = item.extra.get("video_title") or item.title
-        return _clip(f"{nickname} 投稿了视频 · {title}")
-
+        return "投稿了视频"
     if item.extra.get("is_article"):
-        title = item.extra.get("article_title") or item.title
-        return _clip(f"{nickname} 投稿了专栏 · {title}")
+        return "投稿了专栏"
+    if item.extra.get("is_forward"):
+        return "转发了动态"
+    return "发布了动态"
+
+
+def _headline(item: Item) -> str:
+    """这条动态的标题或正文首行 —— 用作预览行"""
+    if item.extra.get("is_video"):
+        return f"标题：{item.extra.get('video_title') or item.title}"
+    if item.extra.get("is_article"):
+        return f"标题：{item.extra.get('article_title') or item.title}"
 
     head = _first_content_line(item.content)
     # 转发动态的正文首行自带「{nickname}：」前缀，去掉避免和昵称重复
-    prefix = f"{nickname}："
+    prefix = f"{item.nickname}："
     if head.startswith(prefix):
         head = head[len(prefix):].strip()
-
-    if item.extra.get("is_forward"):
-        return _clip(f"{nickname} 转发了动态 · {head}" if head else f"{nickname} 转发了动态")
-
-    return _clip(f"{nickname}：{head}" if head else f"{nickname} 发布了动态")
+    return head
 
 
 def build_forward_preview(items: list[Item]) -> dict:
@@ -212,10 +207,33 @@ def build_forward_preview(items: list[Item]) -> dict:
       「昵称：昵称投稿了视频」的双昵称问题。
     - ``summary`` → 底部「查看 N 条转发消息」。
     - ``prompt``  → 实测**没有任何可见效果**，因此不使用。
+
+    文案分工：**标题行说「谁做了什么」，预览行说「标题/正文」**，
+    这样折叠状态下就能直接看到视频标题 / 文章标题 / 动态正文。
+    只有 1 条时标题行带昵称；多条时标题行退化为汇总，昵称改由预览行承担。
     """
+    if len(items) == 1:
+        item = items[0]
+        nickname = item.nickname or "B站用户"
+        headline = _headline(item)
+        return {
+            "source": f"{nickname}{_type_phrase(item)}",
+            "news": [{"text": _clip(headline or _type_phrase(item))}],
+            "summary": "查看 1 条转发消息",
+        }
+
+    news = []
+    for item in items:
+        nickname = item.nickname or "B站用户"
+        headline = _headline(item)
+        line = f"{nickname} {_type_phrase(item)}"
+        if headline:
+            line = f"{line} · {headline}"
+        news.append({"text": _clip(line)})
+
     return {
-        "source": "B站动态",
-        "news": [{"text": _news_line(item)} for item in items],
+        "source": f"B站动态 · {len(items)} 条更新",
+        "news": news,
         "summary": f"查看 {len(items)} 条转发消息",
     }
 
