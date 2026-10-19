@@ -1,5 +1,6 @@
 """LLM Chat 插件 — 消息解析工具"""
 
+from nonebot import logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
 
@@ -33,10 +34,22 @@ def _segments_to_text(segments, get_type, get_data) -> str:
 async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> str:
     """获取被回复消息的发送者名和文本内容。
 
-    SnowLuma 在 event.reply 中直接提供完整回复消息，无需 get_msg API。
-    兼容标准 OneBot 的 reply message segment。
+    ``event.reply`` **不是 SnowLuma 提供的**，而是 nonebot-adapter-onebot 自己造的：
+    适配器 ``bot.py::_check_reply()`` 在 ``event.message`` 里发现 ``type == "reply"``
+    的段后，调 ``get_msg`` 取回原消息并用 ``Reply`` 模型校验，成功才赋值给
+    ``event.reply``；成功时还会顺手把这段 reply 段从 ``event.message`` 里删掉。
+
+    因此下面两个分支的真实分工是：
+      1. ``event.reply`` 有值 —— 适配器已经取好了，直接用（正常路径）；
+      2. ``event.reply`` 为空 —— 说明适配器那一步失败了。它在 ``except`` 里只打一条
+         WARNING 就 return，不会中断事件；此时 reply 段还留在 ``event.message`` 里，
+         我们自己再调一次 ``get_msg`` 补救。
+
+    注意分支 1 取不到内容时本函数只会返回空串（Kei 会把引用当成不存在），
+    所以分支 2 是唯一能救回来的机会 —— 因此被调用方拿到的空串不能一律当成
+    「用户没有引用」。
     """
-    # SnowLuma: event.reply 对象
+    # 分支 1：适配器已解析好的引用（正常路径）
     ev_reply = getattr(event, "reply", None)
     if ev_reply is not None:
         try:
@@ -57,11 +70,11 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
             if sender_name and text:
                 return f"{sender_name}: {text}"
             return text or ""
-        except Exception:
-            pass
+        except Exception as e:
+            nb_logger.debug(f"[引用] 解析 event.reply 失败: {e!r}")
         return ""
 
-    # 标准 OneBot: reply 段 + get_msg API
+    # 分支 2：适配器解析失败，reply 段仍在 event.message 里 → 自己调 get_msg
     for seg in event.message:
         if seg.type == "reply":
             msg_id = seg.data.get("id", "")
@@ -82,8 +95,8 @@ async def get_reply_text(event: GroupMessageEvent, bot: Bot | None = None) -> st
                     if sender_name and text:
                         return f"{sender_name}: {text}"
                     return text or ""
-                except Exception:
-                    pass
+                except Exception as e:
+                    nb_logger.debug(f"[引用] get_msg 补取失败 message_id={msg_id}: {e!r}")
     return ""
 
 
