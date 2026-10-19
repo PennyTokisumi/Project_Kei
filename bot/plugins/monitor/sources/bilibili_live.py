@@ -14,6 +14,12 @@ BILIBILI_USER_API = "https://api.bilibili.com/x/web-interface/card?mid={uid}"
 class BilibiliLive(SourceBase):
     """B站直播监测源"""
 
+    def __init__(self, target_id: str, group_id: int):
+        super().__init__(target_id, group_id)
+        # 主播名缓存。调度器对同一个监测目标复用同一个 source 实例，
+        # 所以这里缓存一次即可，不必每轮轮询都多打一次 card 接口。
+        self._nickname: str = ""
+
     @property
     def platform(self) -> str:
         return "bilibili"
@@ -61,9 +67,11 @@ class BilibiliLive(SourceBase):
         if live_status != 1:
             return []
 
-        # 获取主播名
+        # 获取主播名（只查一次，之后走实例缓存）
         uid = room.get("uid", 0)
-        nickname = await self._get_username(uid) if uid else ""
+        if uid and not self._nickname:
+            self._nickname = await self._get_username(uid)
+        nickname = self._nickname
 
         item = Item(
             id=f"live_{room.get('room_id', self.target_id)}",

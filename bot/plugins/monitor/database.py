@@ -105,18 +105,22 @@ def remove_target(target_id: int) -> bool:
     ).fetchone()
 
     if not remaining:
-        # 所有群都移除了，清空去重记录和直播状态
-        # 注意：pushed_items/live_status 中 platform 使用 SourceBase.platform
-        # 属性值（如 "douyu"、"bilibili"），而 monitor_targets 中 platform
-        # 使用 source_type 完整的 key（如 "douyu_live"）。
-        # 这里用 target_id 匹配以覆盖所有可能的 platform 值。
+        # 所有群都移除了，清空去重记录和直播状态。
+        # monitor_targets.platform 存的是 "{SourceBase.platform}_{source_type}"
+        # （如 bilibili_live），而 pushed_items 把它拆成两列：
+        # platform=bilibili、item_type=live。所以这里要拆开按两列精确匹配，
+        # 否则 target_id 相同的其它平台/类型记录会被一起删掉
+        # （例如 B站直播间 123 与 B站动态 UID 123）。
+        base_platform, _, source_type = row["platform"].rpartition("_")
         conn.execute(
-            "DELETE FROM pushed_items WHERE target_id=?",
-            (row["target_id"],),
+            "DELETE FROM pushed_items "
+            "WHERE target_id=? AND platform=? AND item_type=?",
+            (row["target_id"], base_platform, source_type),
         )
         conn.execute(
-            "DELETE FROM live_status WHERE room_id=? OR room_id LIKE '%:' || ?",
-            (row["target_id"], row["target_id"]),
+            "DELETE FROM live_status "
+            "WHERE platform=? AND (room_id=? OR room_id LIKE '%:' || ?)",
+            (base_platform, row["target_id"], row["target_id"]),
         )
         conn.commit()
 

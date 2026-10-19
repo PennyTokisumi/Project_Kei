@@ -10,7 +10,6 @@ from .database import (
     save_memory,
     search_memory,
     save_short_term,
-    load_short_term,
     cleanup_short_term,
     load_all_short_term_groups,
 )
@@ -115,7 +114,7 @@ class MemoryManager:
             "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。聊天记录按时间分组显示：── MM-DD HH:MM ── 是系统时间分隔符，冒号后是该时间段内的消息正文。带有（刚刚）标记的是当前最新消息。角色 assistant 的消息是你自己发出的。请以 Kei 的身份自然回复。"
         })
 
-        # 长期记忆：按重要性取前 20 条
+        # 长期记忆：按重要性取前 40 条
         memories = get_all_memories(limit=40)
         if memories:
             mem_text = (

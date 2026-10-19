@@ -85,10 +85,17 @@ def temp_db():
     fd, path = tempfile.mkstemp(suffix=".sqlite3")
     os.close(fd)
     yield path
+    # 先释放连接，否则 Windows 上临时库文件删不掉
     try:
-        os.unlink(path)
-    except OSError:
+        from utils.db import close_conn
+        close_conn()
+    except Exception:
         pass
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.unlink(path + suffix)
+        except OSError:
+            pass
 
 
 @pytest.fixture(autouse=True)

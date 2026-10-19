@@ -64,8 +64,14 @@ def _should_flush(gid: int) -> bool:
 
 
 async def _flush_buffer(gid: int, bot: Bot, version: int):
-    """批量刷新缓冲区，发给 Kei 自行判断"""
-    last_should_false = _time.time()
+    """批量刷新缓冲区，发给 Kei 自行判断
+
+    每条新消息都会由 _schedule_flush 重建本 task 并递增版本号，
+    所以这里的计时起点等价于「最后一条消息到达的时刻」。
+    刷新条件（任一满足）：堆积达 MAX_BATCH / 首条进入后满 MAX_WAIT /
+    安静满 IDLE_TIMEOUT。
+    """
+    started = _time.time()
 
     while True:
         await asyncio.sleep(0.5)
@@ -78,12 +84,8 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
             break
         if _buffer_first_ts.get(gid) is None:
             return
-        now = _time.time()
-        if not _should_flush(gid):
-            if now - last_should_false >= IDLE_TIMEOUT:
-                break
-        else:
-            last_should_false = now
+        if _time.time() - started >= IDLE_TIMEOUT:
+            break
 
     # 再次检查版本（防窄窗口竞态：version check → pop 之间新版 task 被创建）
     if _buffer_version.get(gid, 0) != version:
@@ -397,8 +399,9 @@ async def handle_llm_usage(event: GroupMessageEvent):
     today = get_usage_today()
     yesterday = get_usage_yesterday()
     total = get_usage_total()
-    price_prompt = 2.02
-    price_completion = 3.02
+    # 单价来自 config（元/百万 tokens），在 .env 里可覆盖
+    price_prompt = config.llm_price_prompt
+    price_completion = config.llm_price_completion
 
     def _cost(p, c):
         return p / 1_000_000 * price_prompt + c / 1_000_000 * price_completion

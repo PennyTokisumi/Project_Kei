@@ -10,9 +10,9 @@ from pydantic_settings import BaseSettings
 class Config(BaseSettings):
     """全局配置，从环境变量 / .env 文件加载"""
 
-    # NoneBot 驱动
+    # NoneBot 驱动（OneBot 实际连接地址由 nonebot-adapter-onebot
+    # 直读 .env 的 ONEBOT_V11_WS_URLS，此处仅作说明）
     driver: str = Field(default="~fastapi+~websockets")
-    onebot_ws_hosts: list[dict] = Field(default=[{"host": "127.0.0.1", "port": 8080, "access_token": ""}])
 
     # 监测
     poll_interval: int = Field(default=30, description="轮询间隔（秒）")
@@ -31,6 +31,11 @@ class Config(BaseSettings):
     gemini_api_key: str = Field(default="", description="Gemini API Key")
     gemini_model: str = Field(default="gemini-2.5-flash", description="Gemini 模型名")
     llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
+
+    # LLM 计价（元 / 每百万 tokens），仅用于 @Kei LLM 指令的成本估算。
+    # 各供应商、各模型价格不同，需要时在 .env 里改（LLM_PRICE_PROMPT / LLM_PRICE_COMPLETION）
+    llm_price_prompt: float = Field(default=2.02, description="输入价格 元/百万 tokens")
+    llm_price_completion: float = Field(default=3.02, description="输出价格 元/百万 tokens")
 
     @property
     def llm_api_key(self) -> str:
@@ -68,7 +73,6 @@ DATA_DIR = PROJECT_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 config = Config()
-DB_PATH = DATA_DIR / config.db_path
 
 
 def _read_version() -> str:

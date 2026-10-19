@@ -255,10 +255,14 @@ async def reload_targets():
             )
             nb_logger.info(f"新增轮询任务 [{job_id}]")
 
-    # 移除已删除的任务
-    for job_id in current_jobs - wanted_ids:
-        scheduler.remove_job(job_id)
-        nb_logger.info(f"移除轮询任务 [{job_id}]")
+    # 移除已删除的任务。
+    # 注意：只处理本插件注册的轮询任务 —— 同一个 scheduler 上还挂着
+    # agent 插件的 scheduled_msg_* / daily_* 任务，若按 id 差集无差别删除，
+    # 一次 add/remove 就会把它们全部抹掉。
+    for job in scheduler.get_jobs():
+        if job.id not in wanted_ids and job.func is poll_source:
+            scheduler.remove_job(job.id)
+            nb_logger.info(f"移除轮询任务 [{job.id}]")
 
     # 确保调度器在运行
     if not scheduler.running and targets:

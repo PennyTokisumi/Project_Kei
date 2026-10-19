@@ -79,19 +79,17 @@ class TestDouyuFetch:
 
     @pytest.mark.asyncio
     async def test_fetch_both_fail(self, httpx_mock):
-        """两个 API 都失败 → 空列表"""
-        from plugins.monitor.sources.douyu_live import (
-            DOUYU_API_OFFICIAL,
-            DOUYU_API_FALLBACK,
-        )
+        """官方 API 失败时不回退镜像 → 空列表
+
+        契约见 _fetch_official：网络异常会把 _api_responded 置 True，
+        因此 fetch() 不会再打 open.douyucdn.cn。这里故意只 mock 官方端点，
+        若实现真的去请求镜像，httpx_mock 会直接报错。
+        """
+        from plugins.monitor.sources.douyu_live import DOUYU_API_OFFICIAL
 
         httpx_mock.add_exception(
             url=DOUYU_API_OFFICIAL.format(room_id="617916"),
             exception=Exception("官方挂了"),
-        )
-        httpx_mock.add_exception(
-            url=DOUYU_API_FALLBACK.format(room_id="617916"),
-            exception=Exception("备用也挂了"),
         )
 
         source = DouyuLive("617916", 123456)
