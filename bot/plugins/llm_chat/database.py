@@ -110,6 +110,37 @@ def get_all_memories(limit: int = 10) -> list[str]:
     return [r["content"] for r in rows]
 
 
+def get_locked_memories(limit: int = 20) -> list[str]:
+    """importance >= 1.0 的锁定记忆（不可被自动整理改动）
+
+    这类通常是必须长期稳定的事实（生日、关系、承诺等）。
+    单独取一份，避免它们挤占可整理记忆的上下文名额。
+    """
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT content FROM llm_memory WHERE importance >= 1.0 "
+        "ORDER BY importance DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [r["content"] for r in rows]
+
+
+def get_fact_memories(limit: int = 30) -> list[str]:
+    """importance < 1.0 的可整理记忆，按重要性 + 新近度取
+
+    v2.1.8 起与 get_locked_memories() 分开取：
+    原先一律 `ORDER BY importance DESC LIMIT 40`，锁定条目一多就会把
+    这些近期、具体的事实类记忆全部挤出上下文。
+    """
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT content FROM llm_memory WHERE importance < 1.0 "
+        "ORDER BY importance DESC, id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [r["content"] for r in rows]
+
+
 def get_existing_memories() -> list[dict]:
     """获取所有现有记忆（供去重用）"""
     conn = _get_conn()

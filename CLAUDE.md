@@ -72,7 +72,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（43 个用例）
+├── tests/                 # pytest（60 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -162,10 +162,20 @@ QQ 拒绝 HTTP 图片，所有图片 URL 经 `_to_https()` 强制转换。
 否则一次 `add`/`remove` 会把 `agent` 注册的 `daily_*` / `scheduled_msg_*` 一起抹掉。
 
 ### 三层记忆
-1. `PERSONA_PROMPT`（persona.py）
-2. **长期** `llm_memory`：`content + importance`，`importance == 1.0` 视为**人设锁**，
-   自动整理（`get_tidyable_memories` / `replace_memories`）不会动它。
+1. `PERSONA_PROMPT`（persona.py）—— **人设的唯一真源**。
+   身份、性格、说话风格细则、输出格式全在这里，可审查 / 可 diff / 可跟代码一起回滚。
+2. **长期** `llm_memory`：只存**事实类**记忆（关系、生日、往事、偏好）。
+   `importance == 1.0` 视为锁定，自动整理（`get_tidyable_memories` / `replace_memories`）不会动它。
+   风格/性格条目**不再进数据库**（v2.1.8 前是 15 条 `[说话风格]`/`[性格特点]`，已合并进 persona.py）。
 3. **短期** `llm_short_term` + 内存 `deque(maxlen=10)`，按群隔离。
+
+**记忆预算分两层计，互不挤占**（`memory.py`）：
+`MEMORY_LOCKED_LIMIT = 20`（imp ≥ 1.0）+ `MEMORY_FACT_LIMIT = 30`（imp < 1.0）。
+v2.1.8 前是统一 `ORDER BY importance DESC LIMIT 40` —— 锁定条目一多就会把近期事实类记忆全部挤出上下文。
+
+**人设自动学习默认关闭**（`config.persona_autolearn = False`）。
+`_learn_voice()` / `_learn_from_voice()` 会把 `[说话风格]` / `[性格特点]` 写回 `llm_memory`，
+与 persona.py 形成两个真源。要重新蒸馏人设时才临时打开。
 
 `build_context()` 会插入 `── MM-DD HH:MM ──` 时间分隔符（间隔 > 300s 才分隔）并标记 `（刚刚）`。
 写记忆的路径（`replace_memories` / `cleanup_memory` / `delete_memory_by_keyword`）**必须调 `_invalidate_cache()`**，
@@ -243,18 +253,22 @@ cd bot
 ## Git 策略
 - **commit**：自行决定，随时提交
 - **tag / push**：必须先询问用户
-- 恢复点：`v2.1.2`（基线）、`v2.1.3`（修复批次）均为本地 commit，未打 tag
+- 已打 tag：`v2.1.2`（基线）… `v2.1.7`。回滚用 `git reset --hard v2.1.2`
 
 ## 角色设定
 机器人名为 **Kei**，原型是游戏《蔚蓝档案》的天童ケイ，也叫做 kei、KEI、凯伊，称呼用户为"老师"（Sensei）。
 消息风格偏中文/日语双语，以简体中文为主。可夹杂部分简单常用的日语（二次元动画游戏里常见的、或日常会话常用的），
 但主体使用简体中文。
 
+> 完整的角色提示词见 [`bot/plugins/llm_chat/persona.py`](bot/plugins/llm_chat/persona.py)，那里才是人设的唯一真源。
+
 ## 当前状态
 
-- **版本**：v2.1.3
-- **测试**：43 passed
+- **版本**：v2.1.8
+- **测试**：60 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
+- **长期记忆**：26 条（锁定 10 / 可整理 16）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
 - **功能**：B站全类型动态 + B站直播 + 斗鱼直播监控推送；群管理指令；LLM 角色扮演
-  （DeepSeek/Gemini 双供应商）；三层记忆 + 自动整理；自由聊天批量判断；Claude CLI 集成；定时提醒与每日公告。
+  （DeepSeek/Gemini 双供应商）；人设文件 + 事实记忆 + 短期记忆；自由聊天批量判断；
+  Claude CLI 集成；定时提醒与每日公告。

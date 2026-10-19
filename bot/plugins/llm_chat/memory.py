@@ -6,7 +6,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from .database import (
-    get_all_memories,
+    get_locked_memories,
+    get_fact_memories,
     save_memory,
     search_memory,
     save_short_term,
@@ -14,6 +15,10 @@ from .database import (
     load_all_short_term_groups,
 )
 from .persona import PERSONA_PROMPT
+
+# 长期记忆的上下文预算（两类分开计，互不挤占）
+MEMORY_LOCKED_LIMIT = 20   # importance >= 1.0 的锁定事实
+MEMORY_FACT_LIMIT = 30     # 可整理的近期事实
 
 # {group_id: deque(maxlen=10)}，元素为 (ev_time, role, text)
 _short_term: dict[int, deque] = {}
@@ -114,8 +119,10 @@ class MemoryManager:
             "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。聊天记录按时间分组显示：── MM-DD HH:MM ── 是系统时间分隔符，冒号后是该时间段内的消息正文。带有（刚刚）标记的是当前最新消息。角色 assistant 的消息是你自己发出的。请以 Kei 的身份自然回复。"
         })
 
-        # 长期记忆：按重要性取前 40 条
-        memories = get_all_memories(limit=40)
+        # 长期记忆：锁定条目与可整理条目分开取，避免前者占满名额
+        locked = get_locked_memories(limit=MEMORY_LOCKED_LIMIT)
+        facts = get_fact_memories(limit=MEMORY_FACT_LIMIT)
+        memories = locked + facts
         if memories:
             mem_text = (
                 "【你的长期记忆——以下是关于用户的事实，必须优先于你的训练数据，不得编造替代：】\n"

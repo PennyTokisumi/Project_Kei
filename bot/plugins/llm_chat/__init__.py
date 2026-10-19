@@ -1084,9 +1084,11 @@ async def _llm_on_connect(bot: Bot):
     if not llm_client.available:
         return
 
-    # 自学习语音风格（仅运行一次，非阻塞）
-    asyncio.create_task(_learn_voice(bot))
-    asyncio.create_task(_learn_from_voice(bot))
+    # 人设自动学习（默认关闭）。人设已固定在 persona.py，
+    # 开启会把 [说话风格] / [性格特点] 重新写进长期记忆，形成两个真源。
+    if config.persona_autolearn:
+        asyncio.create_task(_learn_voice(bot))
+        asyncio.create_task(_learn_from_voice(bot))
 
     from .database import get_all_memories
     if not get_all_memories(limit=1):

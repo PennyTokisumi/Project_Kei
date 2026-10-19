@@ -37,6 +37,14 @@ class Config(BaseSettings):
     llm_price_prompt: float = Field(default=2.02, description="输入价格 元/百万 tokens")
     llm_price_completion: float = Field(default=3.02, description="输出价格 元/百万 tokens")
 
+    # 人设自动学习（默认关闭）。人设现已固定在 llm_chat/persona.py，
+    # 若打开，_learn_voice / _learn_from_voice 会把 [说话风格] / [性格特点]
+    # 这类条目重新写进 llm_memory，与 persona.py 形成两个真源。
+    persona_autolearn: bool = Field(
+        default=False,
+        description="是否允许从台词池/语音文本自动提炼说话风格并写入长期记忆",
+    )
+
     @property
     def llm_api_key(self) -> str:
         return self.gemini_api_key if self.llm_provider == "gemini" else self.deepseek_api_key
