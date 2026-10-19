@@ -155,6 +155,71 @@ async def send_live_notification(bot: Bot, group_id: int, item: Item):
         pass
 
 
+# ─── 合并转发卡片外观 ──────────────────────────────────────
+# QQ 客户端对预览行有长度上限（超出会自己补「…」），这里先主动收一收，
+# 避免在半个词中间被截断。
+_NEWS_LINE_LIMIT = 40
+
+
+def _first_content_line(text: str) -> str:
+    """取正文第一行非空内容（动态正文可能带换行）"""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _clip(text: str, limit: int = _NEWS_LINE_LIMIT) -> str:
+    """压掉多余空白，并按长度截断"""
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _news_line(item: Item) -> str:
+    """为一条动态生成合并转发的预览行文案"""
+    nickname = item.nickname or "B站用户"
+
+    if item.extra.get("is_video"):
+        title = item.extra.get("video_title") or item.title
+        return _clip(f"{nickname} 投稿了视频 · {title}")
+
+    if item.extra.get("is_article"):
+        title = item.extra.get("article_title") or item.title
+        return _clip(f"{nickname} 投稿了专栏 · {title}")
+
+    head = _first_content_line(item.content)
+    # 转发动态的正文首行自带「{nickname}：」前缀，去掉避免和昵称重复
+    prefix = f"{nickname}："
+    if head.startswith(prefix):
+        head = head[len(prefix):].strip()
+
+    if item.extra.get("is_forward"):
+        return _clip(f"{nickname} 转发了动态 · {head}" if head else f"{nickname} 转发了动态")
+
+    return _clip(f"{nickname}：{head}" if head else f"{nickname} 发布了动态")
+
+
+def build_forward_preview(items: list[Item]) -> dict:
+    """合并转发卡片的三个外观参数
+
+    以下是在 QQ 桌面客户端上逐条实测出来的（2026-10-19）：
+
+    - ``source``  → 卡片标题行。不传则显示 QQ 默认的「群聊的聊天记录」
+      （私聊里是「{节点名}的聊天记录」）。
+    - ``news``    → 中间预览行，**逐条对应节点**，完全取代 QQ 自动拼接的
+      「昵称：正文首行」。这同时修掉了原来视频投稿显示
+      「昵称：昵称投稿了视频」的双昵称问题。
+    - ``summary`` → 底部「查看 N 条转发消息」。
+    - ``prompt``  → 实测**没有任何可见效果**，因此不使用。
+    """
+    return {
+        "source": "B站动态",
+        "news": [{"text": _news_line(item)} for item in items],
+        "summary": f"查看 {len(items)} 条转发消息",
+    }
+
+
 async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
     """发送B站动态合并转发（即使只有1条）"""
     if not items:
@@ -164,11 +229,23 @@ async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
     # SnowLuma 要求有效的 user_id/uin，替换 uin: "0" → bot 自身 QQ
     for node in nodes:
         node["data"]["uin"] = str(bot.self_id)
-    await bot.call_api(
-        "send_group_forward_msg",
-        group_id=group_id,
-        messages=nodes,
-    )
+
+    try:
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=nodes,
+            **build_forward_preview(items),
+        )
+    except Exception as e:
+        # 预览参数出问题也不能丢推送：退回 QQ 默认拼接的卡片样式
+        nb_logger.warning(f"带预览参数的合并转发失败，回退默认样式: {e!r}")
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=nodes,
+        )
+
     # 记录到短期记忆
     try:
         from plugins.llm_chat.memory import memory

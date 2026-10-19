@@ -129,6 +129,9 @@ class BilibiliDynamic(SourceBase):
             extra["is_video"] = True
             extra["video_title"] = archive.get("title", "")
             extra["video_desc"] = re.sub(r'<[^>]+>', '', archive.get("desc", "")).strip()
+        elif dyn_type == "DYNAMIC_TYPE_FORWARD":
+            # 仅用于合并转发的预览行文案（区分「转发了动态」与普通「发布了动态」）
+            extra["is_forward"] = True
         elif dyn_type == "DYNAMIC_TYPE_ARTICLE":
             extra["is_article"] = True
             extra["article_title"] = opus_title or title

@@ -248,3 +248,98 @@ class TestDynamicForwardMessage:
         assert len(nodes) == 5
         for node in nodes:
             assert node["type"] == "node"
+
+
+class TestForwardPreview:
+    """合并转发卡片外观参数（source / news / summary）
+
+    这些字段的行为是在 QQ 桌面客户端上实测出来的：
+    source 是标题行、news 是逐条预览行、summary 是底部计行、prompt 无效。
+    """
+
+    @staticmethod
+    def _item(**kw):
+        base = dict(
+            id="1", platform="bilibili", source_type="dynamic",
+            target_id="436742", title="标题", nickname="谷雨_CSU",
+            content="正文", link="https://t.bilibili.com/1",
+        )
+        base.update(kw)
+        return Item(**base)
+
+    def test_source_and_summary(self):
+        from plugins.monitor.formatter import build_forward_preview
+
+        preview = build_forward_preview([self._item(), self._item()])
+        assert preview["source"] == "B站动态"
+        assert preview["summary"] == "查看 2 条转发消息"
+        # prompt 实测无效，不应再传
+        assert "prompt" not in preview
+
+    def test_news_aligned_with_items(self):
+        """news 必须与节点一一对应"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        preview = build_forward_preview([self._item() for _ in range(3)])
+        assert len(preview["news"]) == 3
+        for entry in preview["news"]:
+            assert set(entry) == {"text"}
+
+    def test_video_line(self):
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(extra={"is_video": True, "video_title": "【MMD】测试视频"})
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text == "谷雨_CSU 投稿了视频 · 【MMD】测试视频"
+
+    def test_article_line(self):
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(extra={"is_article": True, "article_title": "周年庆专栏"})
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text == "谷雨_CSU 投稿了专栏 · 周年庆专栏"
+
+    def test_draw_line_uses_first_line(self):
+        """图文动态取正文第一行"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(content="今天画了新的图\n第二行不需要")
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text == "谷雨_CSU：今天画了新的图"
+
+    def test_forward_line_strips_duplicate_nickname(self):
+        """转发动态正文自带「昵称：」前缀，预览行不应重复昵称"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(
+            content="谷雨_CSU：说点什么\n----------\n原作者的正文",
+            extra={"is_forward": True},
+        )
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text == "谷雨_CSU 转发了动态 · 说点什么"
+        assert text.count("谷雨_CSU") == 1
+
+    def test_empty_content_fallback(self):
+        """空正文时给兜底文案，不能出现空的预览行"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        text = build_forward_preview([self._item(content="")])["news"][0]["text"]
+        assert text == "谷雨_CSU 发布了动态"
+
+    def test_long_text_clipped(self):
+        """超长正文会截断，避免在客户端里被随机位置切断"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(content="字" * 200)
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert text.endswith("…")
+        assert len(text) <= 41
+
+    def test_whitespace_collapsed(self):
+        """正文里的换行/多空格压成单空格"""
+        from plugins.monitor.formatter import build_forward_preview
+
+        item = self._item(content="第一段   多余空格\n\n第二段")
+        text = build_forward_preview([item])["news"][0]["text"]
+        assert "\n" not in text
+        assert "  " not in text
