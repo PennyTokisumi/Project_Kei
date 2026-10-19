@@ -100,10 +100,24 @@ for job_id in current_jobs - wanted_ids:
 
 ## 4. 遗留事项
 
-### 4.1 `voice.txt` 路径不一致（功能从未生效）
+### 4.1 `voice.txt` 路径不一致（已确认是死代码，无需修复）
 `llm_chat/__init__.py::_learn_from_voice()` 读的是 `data/voice.txt`，
-但实际文件在 **`data/seen/voice.txt`**。所以那条"从官方语音台词自学习说话风格"的路径
-**从来没有跑起来过**。要不要恢复、以及恢复后是否值得重跑一次，待定。
+但实际文件在 **`data/seen/voice.txt`**。
+
+**但这只是表象。** 该函数真正的提前返回点在**更前面**的守卫：
+
+```python
+if any("[语音风格]" in m or "[性格特点]" in m for m in existing):
+    _VOICE_LEARNED = True
+    return          # ← 这里就先返回了，根本走不到读文件的代码
+```
+
+而数据库里**已经存在 5 条 `[性格特点]` 记忆**（另有 10 条 `[说话风格]`），
+所以守卫必然命中 —— **就算把路径改对，函数也在到达之前就返回了，改路径不会有任何效果**。
+
+结论：这条路径对人设没有实际缺失。当前长期记忆里已有 15 条 `importance=1.0` 的
+风格/性格条目（`_learn_voice()` 从 20 多条预设台词提炼的那条路径是正常工作的）。
+**除非想"重新学习"（需要先删掉这 15 条再从 `data/seen/voice.txt` 重跑），否则不用动。**
 
 ### 4.2 中文长期记忆检索几乎无效（暂不修）
 `database.search_memory()` 用 `query.split()` 切词，中文整句会变成一个 token 再 `LIKE '%整句%'`，
