@@ -113,11 +113,54 @@ def _get_tooltip() -> str:
         return "Project_Kei | 异常 | 请检查日志"
 
 
-def _create_icon(healthy: bool = True) -> Image.Image:
-    """用 Pillow 生成托盘图标（绿点/黄点）
+# 托盘图标文件：项目根目录下的 kei_bot_icon.ico
+# tray.py 在 bot/ 下，项目根目录在上级
+ICON_PATH = Path(__file__).resolve().parent.parent / "kei_bot_icon.ico"
 
-    绿点 = 一切正常，黄点 = 有异常
+# 图标文件加载结果缓存（None = 加载失败，回退到绘制的圆点）
+_icon_cache: "Image.Image | None" = None
+_icon_loaded = False
+
+
+def _load_icon_file() -> "Image.Image | None":
+    """读取项目根目录的 kei_bot_icon.ico（只读一次并缓存）
+
+    ICO 内可能含多个尺寸，取像素最多的那一帧交给 pystray 缩放。
+    文件不存在或损坏时返回 None，由调用方回退到绘制的圆点。
     """
+    global _icon_cache, _icon_loaded
+    if _icon_loaded:
+        return _icon_cache
+    _icon_loaded = True
+
+    try:
+        with Image.open(ICON_PATH) as img:
+            sizes = img.info.get("sizes") or {img.size}
+            img.size = max(sizes, key=lambda s: s[0] * s[1])
+            img.load()
+            # convert 会生成脱离文件句柄的副本，with 退出后仍可用
+            _icon_cache = img.convert("RGBA")
+        logger.info(
+            f"托盘图标: 已加载 {ICON_PATH.name} "
+            f"({_icon_cache.width}x{_icon_cache.height})"
+        )
+    except Exception as e:
+        logger.warning(f"托盘图标加载失败，回退到默认圆点 ({ICON_PATH}): {e}")
+        _icon_cache = None
+
+    return _icon_cache
+
+
+def _create_icon(healthy: bool = True) -> Image.Image:
+    """生成托盘图标
+
+    优先使用项目根目录的 kei_bot_icon.ico；
+    图标文件缺失或损坏时，回退到 Pillow 绘制的圆点（绿点 = 正常，黄点 = 启动中）。
+    """
+    icon = _load_icon_file()
+    if icon is not None:
+        return icon
+
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -155,7 +198,7 @@ class TrayIcon:
             logger.warning("pystray 未安装，托盘图标不可用")
             return
 
-        # 启动中显示黄点
+        # healthy=False 只影响图标文件缺失时的回退圆点颜色（黄点 = 启动中）
         icon_image = _create_icon(healthy=False)
         self._icon = pystray.Icon(
             "Project_Kei",
@@ -192,12 +235,12 @@ class TrayIcon:
             logger.info("托盘图标已停止")
 
     def set_ready(self):
-        """标记启动完成，图标从黄点切换为绿点，tooltip 切换为运行中"""
+        """标记启动完成，tooltip 切换为运行中"""
         set_ready()  # 更新模块级 status
         if self._icon:
             self._icon.icon = _create_icon(healthy=True)
             self._icon.title = _get_tooltip()
-            logger.info("托盘图标: 就绪（绿点）")
+            logger.info("托盘图标: 就绪")
 
     def _toggle_autostart(self, icon: "pystray.Icon", item):
         """切换开机自启"""
