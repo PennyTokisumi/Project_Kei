@@ -86,6 +86,16 @@ class MemoryManager:
         return (time.time() - last) >= COOLDOWN_SECONDS
 
     @classmethod
+    def cooldown_remaining(cls, group_id: int) -> float:
+        """距离可以再次发言还差几秒（<= 0 表示已可发言）
+
+        调用方应该「等」而不是「丢弃」—— 消息已经进了短期记忆，
+        丢掉回复会让用户觉得 Kei 不理人。
+        """
+        last = _last_speak_time.get(group_id, 0)
+        return max(0.0, COOLDOWN_SECONDS - (time.time() - last))
+
+    @classmethod
     def mark_spoke(cls, group_id: int):
         _last_speak_time[group_id] = time.time()
 
@@ -106,8 +116,14 @@ class MemoryManager:
     @classmethod
     def build_context(cls, group_id: int, current_msg: str,
                       sender_name: str = "某人",
-                      ev_time: int = 9999999999) -> list[dict]:
-        """构建发给 LLM 的完整 messages 数组"""
+                      ev_time: int = 9999999999,
+                      images: list[str] | None = None) -> list[dict]:
+        """构建发给 LLM 的完整 messages 数组
+
+        ``images`` 是当前这条消息附带的图片 URL。有图时当前消息会发成
+        OpenAI 多模态格式（text + image_url 片段），让模型真正看到图。
+        历史消息里的图片不重发 —— QQ 图片 URL 有有效期，重复计费也没意义。
+        """
         prompt = PERSONA_PROMPT
         messages = [{"role": "system", "content": prompt}]
 
@@ -137,13 +153,22 @@ class MemoryManager:
             short.append(cur_entry)
         short.sort(key=lambda x: x[0])
         _last_ts = 0
-        for ev_ts, role, text in short:
+        for idx, (ev_ts, role, text) in enumerate(short):
+            is_last = idx == len(short) - 1
             if _last_ts == 0 or (ev_ts - _last_ts) > 300:
                 tag = "（刚刚）" if ev_ts >= 9999999998 else ""
                 t_str = datetime.fromtimestamp(ev_ts, tz=timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")
                 messages.append({"role": "system", "content": f"── {t_str}{tag} ──"})
                 _last_ts = ev_ts
-            messages.append({"role": role, "content": text})
+
+            if images and is_last and role == "user":
+                # 当前这条消息带图 → 发成多模态内容，让模型真正看到
+                content: list[dict] = [{"type": "text", "text": text}]
+                for url in images:
+                    content.append({"type": "image_url", "image_url": {"url": url}})
+                messages.append({"role": role, "content": content})
+            else:
+                messages.append({"role": role, "content": text})
 
         return messages
 

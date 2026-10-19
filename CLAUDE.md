@@ -189,6 +189,19 @@ v2.1.8 前是统一 `ORDER BY importance DESC LIMIT 40` —— 锁定条目一�
 
 缓冲区用**版本号防竞态**：每条新消息重建 task 并递增 `_buffer_version`，旧 task 检测到版本不符即自行退出。
 
+### 回复分段与图片
+- **一问多答**：模型可用 `[SEP]` 主动把回复拆成 2–3 条短消息，`_split_reply()` 负责拆并限段数
+  (`MAX_REPLY_SEGMENTS = 3`)，各段间隔 `REPLY_SEGMENT_DELAY = 0.6s` 依次发出。
+  第一条带 @，后续直接发。
+- **冷却不是丢弃**：`memory.cooldown_remaining()` 返回还差几秒，调用方 `await` 等它过去再答。
+  早期版本直接 `return`，会造成「连问几句只答一次」甚至完全不理会。
+- **图片识别**：`extract_images()` 取最多 `MAX_IMAGES_PER_MESSAGE = 3` 张 QQ 图片 URL，
+  由 `build_context(images=...)` 把**当前消息**发成 OpenAI 多模态格式（text + `image_url`）。
+  历史消息的图片不重发（URL 有有效期，且重复计费无意义）。
+  实测 `deepseek-v4-flash` 可直接吃外部图片 URL，但**必须关掉 thinking** —— 开着的话推理 token
+  会把 `max_tokens` 吃光，`content` 返回空串。`client.py` 默认就发 `thinking: disabled`，别改。
+- 既无文字又无图片的消息（纯视频/贴纸）直接跳过，不进记忆。
+
 ### `event.reply` 的真实来源（重要）
 `event.reply` **不是 SnowLuma 给的**，而是 `nonebot-adapter-onebot` 的 `_check_reply()` 造成的：
 发现 `type=="reply"` 段 → 调 `get_msg` → 用 `Reply` 模型校验 → 成功才赋值，**并顺手删掉该 reply 段**。
@@ -253,7 +266,7 @@ cd bot
 ## Git 策略
 - **commit**：自行决定，随时提交
 - **tag / push**：必须先询问用户
-- 已打 tag：`v2.1.2`（基线）… `v2.1.7`。回滚用 `git reset --hard v2.1.2`
+- 已打 tag：`v2.1.2`（基线）… `v2.1.8`。回滚用 `git reset --hard v2.1.2`
 
 ## 角色设定
 机器人名为 **Kei**，原型是游戏《蔚蓝档案》的天童ケイ，也叫做 kei、KEI、凯伊，称呼用户为"老师"（Sensei）。
@@ -264,11 +277,11 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.1.8
+- **版本**：v2.1.9
 - **测试**：60 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：26 条（锁定 10 / 可整理 16）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
 - **功能**：B站全类型动态 + B站直播 + 斗鱼直播监控推送；群管理指令；LLM 角色扮演
-  （DeepSeek/Gemini 双供应商）；人设文件 + 事实记忆 + 短期记忆；自由聊天批量判断；
-  Claude CLI 集成；定时提醒与每日公告。
+  （DeepSeek/Gemini 双供应商，**支持识别群友发的图片**）；人设文件 + 事实记忆 + 短期记忆；
+  自由聊天批量判断；回复可拆多条发送；Claude CLI 集成；定时提醒与每日公告。

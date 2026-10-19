@@ -3,13 +3,9 @@
 from nonebot import logger as nb_logger
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageSegment
 
-
-def has_media(event: GroupMessageEvent) -> bool:
-    """检查消息是否包含图片或视频"""
-    for seg in event.message:
-        if seg.type in ("image", "video"):
-            return True
-    return False
+# 一次对话最多带几张图。图片会显著增加 prompt token（每张约 250+），
+# 而且模型对同一条消息里的多图理解能力有限，超过 3 张收益很低。
+MAX_IMAGES_PER_MESSAGE = 3
 
 
 def _segments_to_text(segments, get_type, get_data) -> str:
@@ -197,13 +193,23 @@ def extract_text(event: GroupMessageEvent) -> str:
 
 
 def extract_images(event: GroupMessageEvent) -> list[str]:
-    """提取消息中的图片 URL 列表"""
-    urls = []
+    """提取消息中的图片 URL（最多 MAX_IMAGES_PER_MESSAGE 张）
+
+    SnowLuma 的 image 段把地址放在 `url`，标准 OneBot 放 `file`，两个都认。
+    QQ 图片 URL 带有效期，所以必须尽快交给模型，不能缓存复用。
+    """
+    urls: list[str] = []
     for seg in event.message:
-        if seg.type == "image":
-            url = seg.data.get("url", "")
-            if url:
-                urls.append(url)
+        if seg.type != "image":
+            continue
+        data = seg.data or {}
+        url = data.get("url") or data.get("file") or ""
+        if not url.startswith("http"):
+            continue
+        if url not in urls:
+            urls.append(url)
+        if len(urls) >= MAX_IMAGES_PER_MESSAGE:
+            break
     return urls
 
 

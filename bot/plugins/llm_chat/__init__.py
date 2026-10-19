@@ -25,7 +25,14 @@ from .database import (
 
 from .memory import memory
 from .persona import PERSONA_PROMPT
-from .utils import extract_text, extract_user_name, get_reply_text, get_forward_text, has_media
+from .utils import (
+    MAX_IMAGES_PER_MESSAGE,
+    extract_images,
+    extract_text,
+    extract_user_name,
+    get_reply_text,
+    get_forward_text,
+)
 
 driver = get_driver()
 
@@ -44,13 +51,30 @@ def _is_dup(event: GroupMessageEvent) -> bool:
 
 # ─── 消息缓冲区（P10 自由聊天批量处理）─────────────────
 
-_buffer: dict[int, list[dict]] = {}          # group_id → [{sender_name, msg_text, ev_time}]
+_buffer: dict[int, list[dict]] = {}          # group_id → [{sender_name, msg_text, ev_time, images}]
 _buffer_first_ts: dict[int, float] = {}       # 首条消息进入时间
 _buffer_tasks: dict[int, asyncio.Task] = {}
 _buffer_version: dict[int, int] = {}           # 版本号，防竞态
 IDLE_TIMEOUT = 5.0  # 空闲超时：最后一条消息后 5s 无新消息 → 刷新
 MAX_WAIT = 10.0      # 硬上限：第一条消息进入后 10s → 强制刷新
 MAX_BATCH = 10       # 数量上限：堆积 ≥ 10 条 → 立即刷新
+
+# 多段回复：模型用 [SEP] 主动断开，各段之间的发送间隔
+REPLY_SEGMENT_DELAY = 0.6
+MAX_REPLY_SEGMENTS = 3
+
+
+def _split_reply(reply: str) -> list[str]:
+    """把模型回复按 [SEP] 拆成多条消息
+
+    Kei 可以用 [SEP] 把一句话拆成两三条发出去（先吐槽再补一句）。
+    但模型很容易滥用，所以这里限制段数并丢掉空段 / [PASS]。
+    """
+    if not reply:
+        return []
+    parts = [p.strip() for p in reply.split("[SEP]")]
+    parts = [p for p in parts if p and p != "[PASS]"]
+    return parts[:MAX_REPLY_SEGMENTS]
 
 
 def _should_flush(gid: int) -> bool:
@@ -99,19 +123,28 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
     if not msgs:
         return
 
-    # 冷却检查
-    if not memory.can_speak(gid):
-        # 仍写入短期记忆（消息确实发生了）
-        for m in msgs:
-            memory.add_message(gid, m["sender_name"], m["msg_text"], m["ev_time"])
-        return
+    # 冷却检查：冷却未到**不是丢弃**，而是等它过去再答。
+    # 早期版本这里是 return，导致「连问几句只答一次」甚至彻底不理。
+    remaining = memory.cooldown_remaining(gid)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
 
     # 批量写入短期记忆
     for m in msgs:
         memory.add_message(gid, m["sender_name"], m["msg_text"], m["ev_time"])
 
+    # 这一批里带图的（最多 3 张）一并交给模型看
+    batch_images: list[str] = []
+    for m in msgs:
+        for url in m.get("images", []):
+            if url not in batch_images:
+                batch_images.append(url)
+    batch_images = batch_images[-MAX_IMAGES_PER_MESSAGE:]
+
     # 构建上下文（current_msg 为空串，build_context 不会添加占位条目）
-    msgs_for_llm = memory.build_context(gid, "", "群聊", msgs[-1]["ev_time"])
+    msgs_for_llm = memory.build_context(
+        gid, "", "群聊", msgs[-1]["ev_time"], images=batch_images,
+    )
     msgs_for_llm.append({
         "role": "system",
         "content": (
@@ -122,7 +155,8 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
             "2. 你真正感兴趣的话题（蔚蓝档案、ACG、编程、AI）且你有强烈想说的\n"
             "3. Sensei 对你说话\n"
             "注意：同一轮对话最多回复1条，别每句都接。\n"
-            "决定不回复 → [PASS]。多话题回复用 [SEP] 分隔。"
+            "消息带图片时图片内容已经一并给你了，可以自然聊到。\n"
+            "决定不回复 → [PASS]。想把回复拆成两三条发出去时用 [SEP] 分隔。"
         )
     })
 
@@ -130,13 +164,7 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
     result = await llm_client.chat(messages=msgs_for_llm, max_tokens=512)
     reply = result.get("content", "").strip()
 
-    if not reply:
-        return
-
-    # 解析多段回复
-    segments = [s.strip() for s in reply.split("[SEP]")]
-    segments = [s for s in segments if s and s != "[PASS]"]
-
+    segments = _split_reply(reply)
     if not segments:
         return
 
@@ -787,10 +815,12 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     """@Kei 消息在 KEI ON 的群 → LLM 自然回复"""
     if _is_dup(event):
         return
-    if has_media(event):
-        return
     gid = event.group_id
     msg_text = extract_text(event)
+    images = extract_images(event)
+    # 纯视频 / 纯贴纸之类的消息既没文字也没图，没有可回复的内容
+    if not msg_text.strip() and not images:
+        return
     sender_name = extract_user_name(event)
 
     # 被回复消息的内容注入（SnowLuma event.reply）
@@ -798,7 +828,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
     if reply_text:
         msg_text = f"[回应:\"{reply_text}\"] {msg_text}"
 
-    msgs = memory.build_context(gid, msg_text, sender_name, event.time)
+    msgs = memory.build_context(gid, msg_text, sender_name, event.time, images=images)
     memory.add_message(gid, sender_name, msg_text, event.time)
 
     msgs.append({
@@ -806,24 +836,35 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
         "content": (
             "请以 Kei 的身份回复。上下文中 assistant 角色是你的历史发言，避免重复。"
             "如果积压了多条用户消息，综合回复即可。"
+            "消息里带图片时，图片内容已经一起给你了，可以自然地聊到它。"
         )
     })
 
     result = await llm_client.chat(messages=msgs, max_tokens=512)
     reply = (result.get("content") or "").strip()
+    segments = _split_reply(reply)
+    if not segments:
+        segments = ["……"]
 
-    if not reply:
-        reply = "……"
-    memory.add_assistant_message(gid, reply)
+    memory.add_assistant_message(gid, segments[-1])
     memory.mark_spoke(gid)
 
     from .remember import extract_and_save
     try:
-        await extract_and_save(sender_name, msg_text, reply)
+        await extract_and_save(sender_name, msg_text, segments[-1])
     except Exception:
         pass
     await _maybe_trigger_tidy(bot)
-    await llm_at_handler.finish(Message(f"\n{reply}"), at_sender=True)
+
+    # 多段回复：第一条带 @，其余接着发
+    for i, seg in enumerate(segments):
+        if i == 0:
+            await llm_at_handler.send(Message(f"\n{seg}"), at_sender=True)
+        else:
+            await llm_at_handler.send(Message(seg))
+        if i < len(segments) - 1:
+            await asyncio.sleep(REPLY_SEGMENT_DELAY)
+    await llm_at_handler.finish()
 
 
 # ══════════════════════════════════════════════════════
@@ -835,10 +876,11 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
     """自由聊天：消息进入缓冲区，批量后 Kei 自主判断是否发言"""
     if _is_dup(event):
         return
-    if has_media(event):
-        return
     gid = event.group_id
     msg_text = extract_text(event)
+    images = extract_images(event)
+    if not msg_text.strip() and not images:
+        return
     sender_name = extract_user_name(event)
 
     # 被回复消息的内容注入
@@ -858,6 +900,7 @@ async def handle_free_chat(event: GroupMessageEvent, bot: Bot):
         "sender_name": sender_name,
         "msg_text": msg_text,
         "ev_time": event.time,
+        "images": images,
     })
 
     # 调度刷新
