@@ -48,19 +48,23 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
         content_parts = []
 
         if item.extra.get("is_video"):
-            vid_title = item.extra.get("video_title", "") or item.title
-            content_parts.append(MessageSegment.text(f"标题：{vid_title}\n"))
+            vid_title = (item.extra.get("video_title") or item.title or "").strip()
+            # 标题就是第一行正文，不加「标题：」前缀
+            content_parts.append(MessageSegment.text(f"{vid_title}\n"))
             if item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
-            video_desc = item.extra.get("video_desc", "")
-            content_parts.append(MessageSegment.text(f"\n简介：{video_desc}"))
+            # 紧跟图片的文本不能带前导 \n，否则图片后会多出空行
+            video_desc = (item.extra.get("video_desc", "") or "").strip()
+            if video_desc:
+                content_parts.append(MessageSegment.text(f"简介：{video_desc}"))
             # 动态附带的正文（如有），放在简介之后
             if item.content:
                 content_parts.append(MessageSegment.text(f"\n{item.content}"))
-            content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
+            # 这里前面是文本，需要两个 \n 才能空出一行（与其他三类对齐）
+            content_parts.append(MessageSegment.text(f"\n\n链接：{item.link}"))
         elif item.extra.get("is_article"):
-            art_title = item.extra.get("article_title", "") or item.title
-            content_parts.append(MessageSegment.text(f"标题：{art_title}\n"))
+            art_title = (item.extra.get("article_title") or item.title or "").strip()
+            content_parts.append(MessageSegment.text(f"{art_title}\n"))
             if item.cover_url:
                 content_parts.append(MessageSegment.image(item.cover_url))
             content_parts.append(MessageSegment.text(f"\n链接：{item.link}"))
@@ -181,11 +185,11 @@ def _type_phrase(item: Item) -> str:
 
 
 def _headline(item: Item) -> str:
-    """这条动态的标题或正文首行 —— 用作预览行"""
+    """这条动态的标题或正文首行 —— 用作预览行（视频/专栏直接用标题本身）"""
     if item.extra.get("is_video"):
-        return f"标题：{item.extra.get('video_title') or item.title}"
+        return (item.extra.get("video_title") or item.title or "").strip()
     if item.extra.get("is_article"):
-        return f"标题：{item.extra.get('article_title') or item.title}"
+        return (item.extra.get("article_title") or item.title or "").strip()
 
     head = _first_content_line(item.content)
     # 转发动态的正文首行自带「{nickname}：」前缀，去掉避免和昵称重复
