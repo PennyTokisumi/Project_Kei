@@ -31,3 +31,6 @@ downloads/
 *.swp
 .mem_diag.txt
 ss_cmp.json
+
+# 临时工作区（调试截图、样机图片等，不进 git）
+.workzone/

@@ -1,5 +1,6 @@
-"""消息格式化 - B站动态用合并转发，开播用普通图文消息"""
+"""消息格式化 - B站动态用合并转发，直播开播优先用 Ark 卡片（失败回退普通图文）"""
 
+from nonebot import logger as nb_logger
 from nonebot.adapters.onebot.v11 import MessageSegment, Message, Bot
 
 from .sources.base import Item
@@ -94,10 +95,57 @@ def build_dynamic_forward_msg(items: list[Item]) -> list[dict]:
     return nodes
 
 
+def build_live_ark_params(item: Item) -> dict:
+    """直播开播 → 图文 Ark 卡片参数（SnowLuma 2.0+ 的 send_tuwen_ark）
+
+    实际渲染（QQ 卡片模板固定，无法自定义）::
+
+        ┌────────────────────────────┐
+        │ {title}                    │  第 1 行：直播标题
+        │ {nickname} 开播了          │  第 2 行：desc
+        │                  [封面]    │  右侧：preview_url
+        ├────────────────────────────┤
+        │ 其他来源                    │  ← QQ 对未注册来源的固定标签，改不了
+        └────────────────────────────┘
+        气泡外预览：{nickname} 开播了   ← summary
+
+    几个被实测确认的限制：
+    - ``desc`` 是单段落纯文本，只能自然折行；``\\n`` 会被直接删掉，
+      ``U+2028`` 只在桌面 QQ 断行、手机 QQ 会变成空格。所以这里只用单行。
+    - ``summary`` 不是卡片内的标签，而是**气泡外**的消息预览文字。
+    - 卡片底部的「其他来源」无接口可控：自拼 ark JSON 走 ``json`` 消息段会被
+      QQ 拒收（显示「发送者版本过低」），只有 ``send_tuwen_ark`` 能正常渲染。
+    """
+    nickname = item.nickname or f"房间{item.target_id}"
+    headline = f"{nickname} 开播了"
+
+    params: dict = {
+        "title": item.title or headline,
+        "desc": headline,
+        "summary": headline,
+        "jump_url": item.link,
+    }
+    # 没有封面时不传，让 SnowLuma 用它自己的默认预览图
+    if item.cover_url:
+        params["preview_url"] = item.cover_url
+    return params
+
+
 async def send_live_notification(bot: Bot, group_id: int, item: Item):
-    """发送直播开播提醒"""
-    msg = build_live_message(item)
-    await bot.send_group_msg(group_id=group_id, message=msg)
+    """发送直播开播提醒
+
+    优先发 Ark 卡片；卡片发送失败（接口不可用、QQ 拒收等）时回退到普通图文消息，
+    避免因为卡片问题丢掉开播通知。
+    """
+    try:
+        await bot.call_api(
+            "send_tuwen_ark", group_id=group_id, **build_live_ark_params(item)
+        )
+    except Exception as e:
+        nb_logger.warning(f"开播 Ark 卡片发送失败，回退普通图文消息: {e!r}")
+        msg = build_live_message(item)
+        await bot.send_group_msg(group_id=group_id, message=msg)
+
     # 记录到短期记忆，让 Kei 能看到自己推送的内容
     try:
         from plugins.llm_chat.memory import memory

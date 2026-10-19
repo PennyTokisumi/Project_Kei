@@ -252,7 +252,7 @@ SnowLuma 那份调研报告就是反面教材：整体质量很高，但有两�
 ## 8. 当前可信任的基线
 
 ```
-版本        : Kei v2.1.3  /  SnowLuma 2.0.3-node (protocol v11)
+版本        : Kei v2.1.4  /  SnowLuma 2.0.3-node (protocol v11)
 测试        : 43 passed（.venv\Scripts\python -m pytest tests/ -q）
 插件        : monitor / admin / llm_chat / agent  全部可加载
 端口        : 5099 WebUI / 8080 OneBot WS / 3000 OneBot HTTP
@@ -262,14 +262,54 @@ SnowLuma 备份: snowluma_v1.12.9_backup/
 ```
 
 ### 推送路径验证状态（2026-10-19）
-SnowLuma 2.0.3 上的两条推送路径**均已实测通过**：
+SnowLuma 2.0.3 上的三条推送路径**均已实测通过**：
 
 - **`send_group_forward_msg`（B站动态合并转发）** ✅ 用户以真实 B站动态触发，
   转发正常展开、图片未丢。这是 2.0 改动最多的部分（v1.14.13/.14/.17/.21 连续在修），
   验证通过意味着升级最关键的兼容性风险已排除。
-- **`send_group_msg`（B站直播 / 斗鱼直播 图文消息）** ✅ 开机问候与 @ 回复均走此路径。
+- **`send_group_msg`** ✅ 开机问候与 @ 回复均走此路径。
+- **`send_tuwen_ark`（直播 Ark 卡片）** ✅ v2.1.4 起作为直播推送首选，
+  失败自动回退普通图文消息。
 
 代码上 `send_group_forward_msg` **全项目只有一处调用**：`monitor/formatter.py::send_dynamic_forward()`。
 两个直播源（`bilibili_live` / `douyu_live`）的 `source_type` 都是 `live`，
-在 `scheduler.poll_source()` 里经 `is_live` 分派到 `send_live_notification()`（普通图文）。
+在 `scheduler.poll_source()` 里经 `is_live` 分派到 `send_live_notification()`。
 因此**只有 B站动态走合并转发**，即使只有 1 条动态也用转发。
+
+---
+
+## 9. Ark 卡片实测结论（踩过的坑，别再重试）
+
+直播 Ark 卡片是逐条**真机验证**出来的，以下结论都是实测，不是推测。改动样式前先读这节。
+
+### 9.1 唯一可用的发卡方式
+只有 OneBot 动作 **`send_tuwen_ark`** 能正常渲染，7 个参数：
+`user_id` / `group_id`（二选一）、`title`、`desc`、`summary`、`preview_url`、`jump_url`。
+
+**❌ 不要试图自己拼 ark JSON 走 `json` 消息段。** 虽然 SnowLuma 的 `json` 段转换器可用
+（`case "json"` + `toSegment`），但自拼的 `com.tencent.structmsg` 会被 QQ 判定为非法卡片，
+客户端直接显示「**发送者版本过低，无法展示内容**」。`share` 消息段造的也是同一个模板，同样受限。
+
+### 9.2 字段到底渲染在哪
+
+| 参数 | 位置 |
+|---|---|
+| `title` | 卡片内第 1 行（粗体，直播标题） |
+| `desc` | 卡片内正文，单段落，只能自然折行 |
+| `preview_url` | 卡片右侧缩略图 |
+| `jump_url` | 点击跳转（无可见文字） |
+| `summary` | **气泡外面**的消息预览文字（不是卡片内标签） |
+
+### 9.3 换行的坑
+- 普通 `\n` 在 `desc` 里会被**直接删除**（连空格都不留，两段会粘连）
+- `U+2028`（LINE SEPARATOR）**只有桌面 QQ 断行**，手机 QQ 会渲染成空格；
+  两个连用 = 手机上约 3 个空格，且不会产生空行
+- 结论：**desc 只用单行**，靠自然折行
+
+### 9.4 改不了的东西
+卡片底部固定有一行「**其他来源**」——QQ 给未注册来源的 ark 打的默认标签。
+`send_tuwen_ark` 没有 `source`/`tag` 参数，自拼 JSON 又被拒收，所以**无解，接受它**。
+
+### 9.5 卡片中间的大片空白
+手机端正文下方到底栏之间会有一块空白，是该模板为容纳右侧缩略图预留的固定高度，
+`send_tuwen_ark` 不暴露宽高参数，**改不了**。
