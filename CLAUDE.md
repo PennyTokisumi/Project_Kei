@@ -46,14 +46,16 @@ Project_Kei/
 │   │   │   ├── __init__.py     # 生命周期钩子 + 上线问候
 │   │   │   ├── database.py     # 建表 + CRUD（含 remove_target 清理逻辑）
 │   │   │   ├── dedup.py        # Deduplicator
-│   │   │   ├── formatter.py    # 直播消息 / 动态合并转发
+│   │   │   ├── formatter.py    # 直播消息 / 动态合并转发 / Pixiv 合并转发
+│   │   │   ├── media.py        # 图片下载 + 压缩 + base64（Pixiv 专用）
 │   │   │   ├── scheduler.py    # APScheduler 轮询 + reload_targets
 │   │   │   └── sources/
 │   │   │       ├── base.py           # Item 数据类 + SourceBase ABC
 │   │   │       ├── base_tracker.py   # LiveStatusTracker（off→on + 抖动容错）
 │   │   │       ├── bilibili_dynamic.py
 │   │   │       ├── bilibili_live.py
-│   │   │       └── douyu_live.py
+│   │   │       ├── douyu_live.py
+│   │   │       └── pixiv_illust.py   # Pixiv 画师作品监测
 │   │   ├── admin/              # 功能②：群指令
 │   │   │   └── commands.py
 │   │   ├── llm_chat/           # 功能③：LLM 对话 / 记忆
@@ -72,12 +74,13 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（60 个用例）
+├── tests/                 # pytest（94 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
 │   ├── test_douyu_live.py
 │   ├── test_formatter.py
+│   ├── test_pixiv_illust.py
 │   └── test_wbi.py
 ├── data/                  # 运行时状态（整体不入 git）
 │   ├── db.sqlite3         # 主库
@@ -151,10 +154,41 @@ QQ 拒绝 HTTP 图片，所有图片 URL 经 `_to_https()` 强制转换。
 ### 直播推送失败回滚
 `LiveStatusTracker` 先设 `is_living=1` 再推送；推送失败回滚为 offline，下次轮询可重试。
 
+### 平台命名与别名
+`monitor_targets.platform` 存**完整 key**（带下划线），因为 `remove_target()` 用 `rpartition("_")` 拆。
+用户输入允许用别名，在 `admin/commands.py::PLATFORM_ALIASES` 和 `cli.py` 里统一映射：
+
+| 用户输入 | 实际存储 |
+|---|---|
+| `pixiv` / `px` | `pixiv_illust` |
+
 ### 消息格式
 - **直播**：普通图文消息（封面图 + 标题/主播/链接）
 - **B站动态**：合并转发（`send_group_forward_msg`，即使只有 1 条）。
   节点 `uin` 必须替换成 `bot.self_id`，否则 SnowLuma 拒发。
+- **Pixiv**：合并转发，`source` = `{画师}投稿了P站`，`news` = `[标题]`，
+  节点内是 `标题 → 图片(≤9) → [超限提示] → 空行 → 链接`。
+
+### Pixiv 监测的特殊处理（踩过坑，别乱改）
+- **接口**：`ajax/user/{uid}/profile/top` 一次请求拿到近期作品，每条自带
+  `xRestrict`（R18 标记）和 `createDate`。**不需要登录**，但 UA + Referer 必须带上。
+- **R18 判定只看 `xRestrict`**（0=全年龄 1=R18 2=R18G）。**不要用 `sl` 判断** ——
+  实测全年龄作品上 `sl` 可能是 2 也可能是 6，它表示的是别的分级维度。
+- **`Profile/top` 的 `tags` 是字符串列表**，而 `ajax/illust/{id}` 是 `[{"tag": ...}]` 对象列表。
+  `_parse_tags()` 两种都兼容 —— 只写一种会在真机上直接 AttributeError。
+- **图片必须自己下载**：`i.pximg.net` 有防盗链，无 Referer 返回 403。
+  所以走 `media.py` 的「下载 → 等比缩放到长边 ≤1200 → JPEG q85 → base64」，
+  再用 `MessageSegment.image("base64://...")` 发（SnowLuma 的 `inlineBase64Payload` 认这个）。
+  **直接传 URL 给 QQ 一定是裂图。**
+- **首次订阅静默同步**：`_sync_pixiv_new_items()` 用 `has_pushed_items()` 判断 ——
+  该目标还没有任何推送记录时，把当前所有作品标记为已推送但**一条都不发**。
+- **重启补推**：和 B站不同，Pixiv 用数据库判断而非启动时间戳，所以停机期间画师更新能补推；
+  但最多补 3 条（`PIXIV_BACKLOG_LIMIT`），多出来的静默标记。
+  补推内容全部塞进**同一个合并转发**，不会刷屏。
+- **轮询间隔**：`pixiv_poll_interval`（默认 300s），由 `poll_interval_for()` 按平台分派。
+  和 B站的 30s 分开，别写成同一个值。
+- **代理**：Pixiv 在国内不能直连，代码**不显式配代理**，依赖 httpx 默认的
+  `trust_env=True` → `urllib.getproxies()` → 读 Windows 系统代理。Clash 关掉就推不了。
 
 ### 调度器共享陷阱
 `monitor` 和 `agent` **共用同一个全局 APScheduler 实例**。
@@ -243,7 +277,8 @@ v2.1.8 前是统一 `ORDER BY importance DESC LIMIT 40` —— 锁定条目一�
 | 99 | `@Kei <未知>` | 所有人 | 兜底随机台词 |
 | — | 拍一拍 | 所有人 | 被拍时回拍 + 回复 |
 
-`add` 支持的平台：`bilibili_dynamic` / `bilibili_live` / `douyu_live`。
+`add` 支持的平台：`bilibili_dynamic` / `bilibili_live` / `douyu_live` / `pixiv_illust`
+（可简写 `pixiv`，画师 UID，例如 `add pixiv 38297201`）。
 
 > 注意 `startswith` 是**大小写敏感**的，`@Kei kei on` 不生效，必须 `KEI`。
 
@@ -280,11 +315,12 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.1.9
-- **测试**：60 passed
+- **版本**：v2.2.0
+- **测试**：94 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：26 条（锁定 10 / 可整理 16）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
-- **功能**：B站全类型动态 + B站直播 + 斗鱼直播监控推送；群管理指令；LLM 角色扮演
-  （DeepSeek/Gemini 双供应商，**支持识别群友发的图片**）；人设文件 + 事实记忆 + 短期记忆；
-  自由聊天批量判断；回复可拆多条发送；Claude CLI 集成；定时提醒与每日公告。
+- **功能**：B站全类型动态 + B站直播 + 斗鱼直播 + **Pixiv 画师作品**监控推送；
+  群管理指令；LLM 角色扮演（DeepSeek/Gemini 双供应商，**支持识别群友发的图片**）；
+  人设文件 + 事实记忆 + 短期记忆；自由聊天批量判断；回复可拆多条发送；
+  Claude CLI 集成；定时提醒与每日公告。

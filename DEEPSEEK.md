@@ -502,3 +502,104 @@ content: '粉色长发戴蓝发饰的少女正侧身端着狙击枪瞄准呢…�
 - **多图理解**：一次塞 3 张图模型容易只看第一张，没有做特殊处理
 - **视频**：完全没处理（`extract_text` 里也没有 video 分支，纯视频消息会被跳过）
 - **图片过期**：QQ 图片 URL 有时效，如果排队很久（比如冷却等待）可能失效 —— 目前没做重取
+
+---
+
+## 13. Pixiv 画师作品推送（v2.2.0）
+
+### 13.1 需求
+
+`add pixiv <画师UID>` 订阅画师，新作品推送到群；**Pixiv 标记为 R18 的跳过**，其余推送。
+
+### 13.2 上线前的实测（每条都真机验证过）
+
+| 问题 | 结论 |
+|---|---|
+| 免登录能用吗 | ✅ 能。`ajax/user/{uid}/profile/top` 直接返回作品列表 |
+| R18 标记在哪 | ✅ 每条自带 `xRestrict`（0=全年龄 1=R18 2=R18G），**不用额外查详情** |
+| 能用 `sl` 判 R18 吗 | ❌ **不能**。全年龄作品上 `sl` 见过 2 也见过 6，那是别的分级维度 |
+| 图片能直接传 URL 吗 | ❌ **不行**。`i.pximg.net` 无 Referer 返回 **403**，QQ 拉图不带 Referer ⇒ 必裂 |
+| 国内能直连吗 | ❌ **不能**。真直连全部 ConnectTimeout，必须走代理 |
+| `tags` 结构 | ⚠️ `profile/top` 是**字符串列表**，`illust/{id}` 是 `[{"tag":...}]` 对象列表，两种都要兼容 |
+| base64 发图支持吗 | ✅ SnowLuma 的 `inlineBase64Payload()` 认 `base64://`，实测 2MB 请求体也能发 |
+
+**关于"直连"的一次误判**：最初我用 `httpx.AsyncClient(proxy=None)` 测出"直连可用"，
+但 `trust_env` 默认 `True` → httpx 调 `urllib.getproxies()` → **Windows 上它读注册表的系统代理**，
+所以那次其实一直在偷偷走 Clash。加 `trust_env=False` 后才暴露真实情况。
+
+### 13.3 关键设计
+
+| 项 | 决定 |
+|---|---|
+| 平台 key | `pixiv_illust`（带下划线，因为 `remove_target()` 用 `rpartition("_")` 拆平台名） |
+| 用户输入 | `pixiv` / `px` 由 `PLATFORM_ALIASES` 映射到 `pixiv_illust` |
+| 轮询 | `profile/top` 一次请求，`pixiv_poll_interval` 默认 **300 秒**（B站是 30 秒，分开） |
+| R18 过滤 | `xRestrict != 0` 跳过；`isMasked` 跳过；**不过滤 AI**（用户明确要求只看 R18） |
+| 图片数量 | 最多 `pixiv_max_images = 9` 张；超过 9 页时末尾加一行 `（全部图片请查看链接）` |
+| 图片处理 | 下载（带 Referer）→ 等比缩到长边 ≤1200 → JPEG q85 → base64，**全程内存不落盘** |
+| 首次订阅 | 静默同步：全部标记已推送，一条不发 |
+| 重启补推 | 用数据库判断（不是启动时间戳），最多补 3 条，多出来的静默标记 |
+| 补推形态 | 全部塞进**同一个合并转发**，不会刷屏 |
+| 代理 | 不显式配，依赖 httpx 读系统代理 |
+
+### 13.4 卡片格式
+
+折叠状态可见两行：
+
+```
+{画师名}投稿了P站        ← source
+{作品标题}                ← news
+查看 1 条转发消息          ← summary
+```
+
+点开后：
+
+```
+{标题}
+[图片 1]
+...
+[图片 N]                ← 最多 9 张
+（全部图片请查看链接）      ← 仅当页数 > 9
+                        ← 空行
+链接：https://www.pixiv.net/artworks/{pid}
+```
+
+空行规则沿用之前摸出来的：紧跟**图片**的文本用 `\n`，紧跟**文字**的用 `\n\n`。
+
+### 13.5 实现文件
+
+| 文件 | 内容 |
+|---|---|
+| `sources/pixiv_illust.py` | **新建**。`PixivIllust` 数据源 + `fetch_page_urls()` + `_parse_tags()` |
+| `media.py` | **新建**。`download_as_base64()` / `compress_to_jpeg()` |
+| `formatter.py` | 新增 `build_pixiv_preview()` / `build_pixiv_forward_msg()` / `send_pixiv_forward()` |
+| `scheduler.py` | 注册工厂、`poll_interval_for()`、`_sync_pixiv_new_items()`、推送分派 |
+| `admin/commands.py` | `PLATFORM_ALIASES` / `PLATFORM_SHORT_NAMES`、add 校验、help |
+| `cli.py` | 平台别名 + **修了一个既有 bug**（见 13.7） |
+| `config.py` | `pixiv_poll_interval` / `pixiv_max_images` / `pixiv_max_image_side` |
+| `tests/test_pixiv_illust.py` | **新建**，34 个用例 |
+
+### 13.6 上线前用手动脚本验过的样本
+
+| pid | 页数 | 结果 |
+|---|---|---|
+| 139242565 | 6 | 6 图全推，无提示行，1.5 MB → 请求体 2.01 MB，9.5 秒 |
+| 149405647 | 1 | 单图分支，无提示行，462 KB → 101 KB |
+| 147543315 | 6 | 6 图，4585 KB → 939 KB，请求体 1.22 MB，9.5 秒 |
+| 148404748 | 2 | 卡片样式确认 |
+
+实测压缩率稳定在 **75%～80%**，画质在 QQ 里看没有明显损失。
+
+### 13.7 顺手修的既有 bug
+
+`bot/cli.py` 一直是**跑不起来**的：它 `from plugins.monitor.database import ...`，
+而 `plugins/monitor/__init__.py` 顶层就调 `get_driver()`，没有 `nonebot.init()` 直接 RuntimeError。
+文档里写着的 `python cli.py add/list/remove` 从来没成功过。已加 `nonebot.init()` 修掉。
+
+### 13.8 还没做的
+
+- **多图理解**：9 张图一次发，客户端加载压力大，但没做分批
+- **ugoira 动图**（`illustType=2`）：只能拿到静态帧，没特殊处理
+- **登录态**：匿名够用；若出现漏推（画师更了但没推），再填 `PHPSESSID`
+- **反爬兜底**：现在只靠 UA + Referer + 300 秒间隔，没做 403 退避和重试
+- **标签**：已解析进 `item.extra["tags"]`，但没显示在卡片里

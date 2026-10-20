@@ -14,6 +14,20 @@ from ..monitor.database import (
 )
 from ..monitor.scheduler import reload_targets, SOURCE_FACTORY as _SOURCE_FACTORY
 
+# 平台别名：用户能少打几个字。内部一律存完整 key。
+PLATFORM_ALIASES = {
+    "pixiv": "pixiv_illust",
+    "px": "pixiv_illust",
+}
+
+# 平台上显示用的短名
+PLATFORM_SHORT_NAMES = {
+    "bilibili_dynamic": "B站动态",
+    "bilibili_live": "B站直播",
+    "douyu_live": "斗鱼直播",
+    "pixiv_illust": "Pixiv",
+}
+
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=3)
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
@@ -45,18 +59,22 @@ async def handle_add(event: GroupMessageEvent):
             Message("格式: add <平台> <目标ID>\n"
                     "示例: add bilibili_dynamic 436742\n"
                     "      add bilibili_live 436742\n"
-                    "      add douyu_live 617916"),
+                    "      add douyu_live 617916\n"
+                    "      add pixiv 38297201   （Pixiv 画师 UID）"),
             at_sender=True,
         )
 
-    platform = parts[1].lower()
+    # 平台别名：用户输入 pixiv 即可，内部存完整 key「pixiv_illust」
+    # （必须带下划线，remove_target 用 rpartition("_") 拆平台名）
+    platform = PLATFORM_ALIASES.get(parts[1].lower(), parts[1].lower())
     target_id = parts[2].strip()
 
-    valid_platforms = {"bilibili_dynamic", "bilibili_live", "douyu_live"}
+    valid_platforms = {"bilibili_dynamic", "bilibili_live", "douyu_live", "pixiv_illust"}
     if platform not in valid_platforms:
         await add_cmd.finish(
-            Message(f"不支持的平台: {platform}\n"
-                    f"支持: {', '.join(valid_platforms)}"),
+            Message(f"不支持的平台: {parts[1]}\n"
+                    f"支持: {', '.join(sorted(valid_platforms))}\n"
+                    f"（也可直接用 pixiv 指代 pixiv_illust）"),
             at_sender=True,
         )
 
@@ -115,7 +133,7 @@ async def handle_list(event: GroupMessageEvent):
             display = tid
         plat = t['platform']
         # 平台简称
-        plat_short = {"bilibili_dynamic": "B站动态", "bilibili_live": "B站直播", "douyu_live": "斗鱼直播"}.get(plat, plat)
+        plat_short = PLATFORM_SHORT_NAMES.get(plat, plat)
         lines.append(f"  {idx}. [{plat_short}] {display}")
 
     await list_cmd.finish(
@@ -317,6 +335,7 @@ async def handle_help(event: GroupMessageEvent):
         "add bilibili_live <房间号>  -  添加B站直播监测",
         "add bilibili_dynamic <UID>  -  添加B站动态监测",
         "add douyu_live <房间号>  -  添加斗鱼直播监测",
+        "add pixiv <画师UID>  -  添加Pixiv作品监测",
         "remind <时间> <内容>  -  设定定时提醒",
         "daily <HHMM> <内容>  -  设定每日定时公告",
         "",

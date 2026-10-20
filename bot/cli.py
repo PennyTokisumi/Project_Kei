@@ -16,13 +16,22 @@
 import sys
 sys.path.insert(0, ".")
 
+# plugins.monitor.__init__ 在导入时就会调用 get_driver()，
+# 不先 init 会直接抛 RuntimeError —— 早期版本这个 CLI 其实一直跑不起来。
+import nonebot
+nonebot.init()
+
 from plugins.monitor.database import init_db, add_target, remove_target, list_targets, get_target
 
-VALID_PLATFORMS = {"bilibili_dynamic", "bilibili_live", "douyu_live"}
+VALID_PLATFORMS = {"bilibili_dynamic", "bilibili_live", "douyu_live", "pixiv_illust"}
+
+# 别名：pixiv → pixiv_illust（和群指令 add 保持一致）
+PLATFORM_ALIASES = {"pixiv": "pixiv_illust", "px": "pixiv_illust"}
 
 
 def cmd_add(group_id: int, platform: str, target_id: str):
     init_db()
+    platform = PLATFORM_ALIASES.get(platform.lower(), platform.lower())
     rid = add_target(group_id=group_id, platform=platform, target_id=target_id)
     print(f"✅ [{rid}] 群 {group_id} → {platform} {target_id}")
     print("⚠️ 重启 NoneBot2 后生效")
@@ -60,10 +69,11 @@ if __name__ == "__main__":
     cmd = args[0].lower()
     if cmd == "add" and len(args) >= 4:
         gid = int(args[1])
-        plat = args[2].lower()
+        plat = PLATFORM_ALIASES.get(args[2].lower(), args[2].lower())
         tid = args[3]
         if plat not in VALID_PLATFORMS:
-            print(f"❌ 未知平台: {plat}, 支持: {', '.join(sorted(VALID_PLATFORMS))}")
+            print(f"❌ 未知平台: {args[2]}, 支持: {', '.join(sorted(VALID_PLATFORMS))}")
+            print("   （也可直接用 pixiv 指代 pixiv_illust）")
             sys.exit(1)
         cmd_add(gid, plat, tid)
     elif cmd == "list":

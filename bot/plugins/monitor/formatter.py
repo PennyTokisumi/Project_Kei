@@ -276,3 +276,127 @@ async def send_dynamic_forward(bot: Bot, group_id: int, items: list[Item]):
         memory.add_assistant_message(group_id, summary)
     except Exception:
         pass
+
+
+# ─── Pixiv 作品推送 ────────────────────────────────────────
+# 折叠卡片：  {画师}投稿了P站  /  {标题}  /  查看 N 条转发消息
+# 点开后：    {标题} → 图片（最多 pixiv_max_images 张）→ [超出提示] → 空行 → 链接
+#
+# Pixiv 图片必须自己下载后转 base64 —— i.pximg.net 有 Referer 防盗链，
+# 直接传 URL 给 QQ 会裂图。详见 media.py。
+
+PIXIV_MORE_HINT = "（全部图片请查看链接）"
+
+
+def build_pixiv_preview(items: list[Item]) -> dict:
+    """Pixiv 合并转发的卡片外观参数（source / news / summary）
+
+    单条时标题行带画师名，多条时退化为汇总（和 B站动态同一套逻辑）。
+    """
+    if len(items) == 1:
+        item = items[0]
+        return {
+            "source": f"{item.nickname}投稿了P站",
+            "news": [{"text": _clip(item.title)}],
+            "summary": "查看 1 条转发消息",
+        }
+
+    news = [
+        {"text": _clip(f"{it.nickname}：{it.title}")}
+        for it in items
+    ]
+    return {
+        "source": f"Pixiv · {len(items)} 条更新",
+        "news": news,
+        "summary": f"查看 {len(items)} 条转发消息",
+    }
+
+
+async def build_pixiv_forward_msg(items: list[Item]) -> list[dict]:
+    """Pixiv 作品 → 合并转发节点列表（图片现下载现编码）
+
+    每张图都要：取页地址 → 下载（带 Referer）→ 缩放 → base64。
+    单条作品最多 `pixiv_max_images` 张，超出的在末尾提示去看原链接。
+    """
+    from config import config
+    from .media import download_as_base64
+    from .sources.pixiv_illust import fetch_page_urls, image_headers
+
+    max_images = max(1, config.pixiv_max_images)
+    max_side = config.pixiv_max_image_side
+
+    nodes: list[dict] = []
+    for item in items:
+        content_parts: list = [MessageSegment.text(f"{item.title}\n")]
+
+        urls = await fetch_page_urls(item.id, item.target_id)
+        take = urls[:max_images]
+
+        images_added = 0
+        for url in take:
+            b64 = await download_as_base64(
+                url, image_headers(), max_side=max_side
+            )
+            if b64:
+                content_parts.append(MessageSegment.image(b64))
+                images_added += 1
+
+        if not images_added:
+            nb_logger.warning(f"Pixiv 作品图片全部下载失败 [{item.id}]，只发文字")
+
+        page_count = int(item.extra.get("page_count") or len(urls) or 1)
+        # 紧跟图片的文本不能带前导 \n，否则图片后会多出空行；
+        # 紧跟文字的文本需要 \n\n 才能空出一行
+        last_is_image = images_added > 0
+        if page_count > max_images:
+            content_parts.append(MessageSegment.text(PIXIV_MORE_HINT))
+            last_is_image = False
+
+        prefix = "\n" if last_is_image else "\n\n"
+        content_parts.append(MessageSegment.text(f"{prefix}链接：{item.link}"))
+
+        nodes.append({
+            "type": "node",
+            "data": {
+                "name": item.nickname or "Pixiv",
+                "uin": "0",
+                "content": content_parts,
+            },
+        })
+
+    return nodes
+
+
+async def send_pixiv_forward(bot: Bot, group_id: int, items: list[Item]):
+    """发送 Pixiv 作品更新（合并转发 + 卡片外观参数）"""
+    if not items:
+        return
+
+    nodes = await build_pixiv_forward_msg(items)
+    if not nodes:
+        return
+    for node in nodes:
+        node["data"]["uin"] = str(bot.self_id)
+
+    try:
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=nodes,
+            **build_pixiv_preview(items),
+        )
+    except Exception as e:
+        nb_logger.warning(f"Pixiv 合并转发失败，回退默认样式: {e!r}")
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=nodes,
+        )
+
+    # 记录到短期记忆
+    try:
+        from plugins.llm_chat.memory import memory
+        titles = "、".join(it.title[:30] for it in items)
+        memory.add_assistant_message(group_id, f"[Kei推送了Pixiv: {titles}]")
+    except Exception:
+        pass

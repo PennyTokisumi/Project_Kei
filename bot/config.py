@@ -18,6 +18,16 @@ class Config(BaseSettings):
     poll_interval: int = Field(default=30, description="轮询间隔（秒）")
     db_path: str = Field(default="db.sqlite3")
 
+    # Pixiv
+    # 反爬比 B站严，且每次轮询要打一次画师主页，间隔不能太短
+    pixiv_poll_interval: int = Field(default=300, description="Pixiv 轮询间隔（秒）")
+    pixiv_max_images: int = Field(
+        default=9, description="多页作品最多推送几张图，超出时提示看原链接"
+    )
+    pixiv_max_image_side: int = Field(
+        default=1200, description="图片等比缩放的长边上限（像素）"
+    )
+
     # B站
     bilibili_cookie: str = Field(
         default="",
