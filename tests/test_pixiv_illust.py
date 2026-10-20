@@ -331,3 +331,48 @@ class TestSyncPolicy:
 
         result = _sync_pixiv_new_items(src, _make_items(2))
         assert len(result) == 2
+
+
+# ─── 新目标首次轮询 ────────────────────────────────────────
+
+class TestNewTargetImmediatePoll:
+    """新加的监测目标要立刻跑一次，不能干等一个完整周期
+
+    Pixiv 周期 300 秒，如果等满才第一次抓取，用户会以为 add 没生效。
+    """
+
+    def test_new_job_scheduled_almost_immediately(self, monkeypatch):
+        import asyncio
+        from datetime import datetime
+
+        from plugins.monitor import scheduler as sched_mod
+        from plugins.monitor.database import add_target, init_db
+
+        init_db()
+        add_target(group_id=999001, platform="pixiv_illust", target_id="38297201")
+
+        captured: dict = {}
+
+        class _FakeScheduler:
+            running = True
+
+            def get_jobs(self):
+                return []
+
+            def add_job(self, *args, **kwargs):
+                captured.update(kwargs)
+
+            def start(self):
+                pass
+
+            def remove_job(self, job_id):
+                pass
+
+        monkeypatch.setattr(sched_mod, "scheduler", _FakeScheduler())
+        asyncio.run(sched_mod.reload_targets())
+
+        assert "next_run_time" in captured, "新任务必须设置 next_run_time"
+        delay = (captured["next_run_time"] - datetime.now()).total_seconds()
+        assert 0 <= delay <= 15, f"首次延迟应接近 10 秒，实际 {delay:.1f}s"
+        # 间隔仍然按平台走
+        assert captured["seconds"] == 300

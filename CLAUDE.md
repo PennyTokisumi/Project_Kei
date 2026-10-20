@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（94 个用例）
+├── tests/                 # pytest（95 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -187,6 +187,9 @@ QQ 拒绝 HTTP 图片，所有图片 URL 经 `_to_https()` 强制转换。
   补推内容全部塞进**同一个合并转发**，不会刷屏。
 - **轮询间隔**：`pixiv_poll_interval`（默认 300s），由 `poll_interval_for()` 按平台分派。
   和 B站的 30s 分开，别写成同一个值。
+- **新目标立即首轮**：`reload_targets()` 给新增任务设 `next_run_time = now + 10s`
+  （`NEW_TARGET_FIRST_POLL_DELAY`），否则 Pixiv 要干等 5 分钟才第一次抓取，用户会以为没生效。
+  `start()` 里不加这个 —— 启动时让它们按各自间隔散开，避免开机瞬间一串请求。
 - **代理**：Pixiv 在国内不能直连，代码**不显式配代理**，依赖 httpx 默认的
   `trust_env=True` → `urllib.getproxies()` → 读 Windows 系统代理。Clash 关掉就推不了。
 
@@ -315,8 +318,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.2.0
-- **测试**：94 passed
+- **版本**：v2.2.1
+- **测试**：95 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：26 条（锁定 10 / 可整理 16）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

@@ -20,6 +20,7 @@ from .sources.pixiv_illust import PixivIllust
 from tray import update_status
 
 import time as _time_module
+from datetime import datetime, timedelta
 
 scheduler = AsyncIOScheduler()
 
@@ -28,6 +29,9 @@ _startup_ts = _time_module.time()
 
 # 启动后已静默同步过的目标
 _synced_targets: set[tuple[str, str]] = set()
+
+# 新添加的监测目标延迟多久跑第一次（秒）
+NEW_TARGET_FIRST_POLL_DELAY = 10
 
 # 重启后最多补推几条 Pixiv 作品（多出来的静默标记，避免停机久了刷屏）
 # 注意：补推的内容会合并成**一条**转发消息，不是多条
@@ -325,11 +329,17 @@ async def reload_targets():
                 seconds=interval,
                 id=job_id,
                 args=[source],
+                # 新加的目标立刻跑一次，不用干等一个完整周期。
+                # Pixiv 周期是 300 秒，等满会让人以为没生效。
+                # 留 10 秒缓冲，避免和 add 指令的回复撞在一起。
+                next_run_time=datetime.now() + timedelta(seconds=NEW_TARGET_FIRST_POLL_DELAY),
                 replace_existing=True,
                 misfire_grace_time=30,
                 jitter=5,
             )
-            nb_logger.info(f"新增轮询任务 [{job_id}] 间隔 {interval}s")
+            nb_logger.info(
+                f"新增轮询任务 [{job_id}] 间隔 {interval}s（{NEW_TARGET_FIRST_POLL_DELAY}s 后先跑一次）"
+            )
 
     # 移除已删除的任务。
     # 注意：只处理本插件注册的轮询任务 —— 同一个 scheduler 上还挂着
