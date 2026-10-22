@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（95 个用例）
+├── tests/                 # pytest（110 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -193,6 +193,40 @@ QQ 拒绝 HTTP 图片，所有图片 URL 经 `_to_https()` 强制转换。
 - **代理**：Pixiv 在国内不能直连，代码**不显式配代理**，依赖 httpx 默认的
   `trust_env=True` → `urllib.getproxies()` → 读 Windows 系统代理。Clash 关掉就推不了。
 
+### Pixiv 大规模订阅的限流设计
+订阅数会上百，四道防线缺一不可：
+
+| 机制 | 位置 | 说明 |
+|---|---|---|
+| **间隔自适应** | `pixiv_interval_for()` | `max(pixiv_poll_interval, 订阅数 × PIXIV_MIN_SECONDS_PER_TARGET)`。<br>每个订阅平均占 6 秒 → 20 个以内仍是 300s，**100 个自动变 600s**，总速率恒定 |
+| **启动错峰** | `start()` | 首轮 `next_run_time` 在 `[10s, interval]` 内随机，不再让所有任务都在「开机 + interval」同时触发 |
+| **抖动放大** | `jitter_for()` | Pixiv 用 60s（其他平台 5s），把请求摊开 |
+| **失败退避** | `PixivIllust._register_failure()` | 403/429 从 300s 起指数退避（封顶 1 小时），网络错误 60s 起。<br>日志会明确写「限流：HTTP 429，退避 600s（连续第 2 次）」 |
+
+**退避为什么重要**：早期版本遇到 403 只打一条 warning 就返回空列表，
+日志上完全分不清「画师没更新」和「我们被限流了」，排查时会被误导。
+`is_backing_off` 属性可用于诊断。
+
+**注意请求放大**：每个新作品除 1 次 `profile/top`，还要 1 次 `pages` + 最多 9 次图片下载 ≈ 11 个请求。
+
+### 大规模订阅的列表分页
+`list` 只显示 B站/斗鱼；Pixiv 走独立的 `pixivlist`：
+
+- **每页 20 个**（`PIXIV_LIST_PAGE_SIZE`），默认第 1 页，合并转发，**一页一个节点**
+- **排序按添加顺序（`id` 升序）** —— 新增订阅只追加到末尾，前面每一页永远稳定。
+  按 uid 排序会让新订阅插到中间、后面所有页边界漂移，所以不采用。
+- **序号只用于阅读**，删除一律用 `remove pixiv <UID>`，不会因为编号漂移删错。
+- **`paginate_pixiv()` 是纯函数**，分页逻辑全部可单测。
+
+⚠️ `list` 与 `remove <序号>` **必须用同一套过滤**（都排除 `pixiv_illust`），
+否则序号错位会删错目标。改任一处都要同步改另一处。
+
+### 软删除说明
+`remove_target()` 是**软删除**（`enabled=0`），配合 `add_target` 的
+`ON CONFLICT ... DO UPDATE SET enabled=1` 支持重新订阅时复用旧行。
+只有所有群都移除了，才会清空该目标的去重记录与直播状态。
+所以库里存在大量 `enabled=0` 的行是**正常现象**，不是垃圾数据。
+
 ### 调度器共享陷阱
 `monitor` 和 `agent` **共用同一个全局 APScheduler 实例**。
 `reload_targets()` 删除任务时必须限定 `job.func is poll_source`，
@@ -269,8 +303,10 @@ v2.1.8 前是统一 `ORDER BY importance DESC LIMIT 40` —— 锁定条目一�
 | 4 | `sensei` | Sensei | 含隐藏指令的完整帮助 |
 | 4 | `history [N]` | Sensei | 拉群聊历史存 `data/chatlogs/` |
 | 5 | `add <平台> <ID>` | 所有人 | 加监测目标（自动解析显示名） |
-| 5 | `list` | 所有人 | 本群目标列表 |
-| 5 | `remove <序号>` | **群主/管理员** | 移除目标 |
+| 5 | `list` | 所有人 | 本群目标列表（**不含 Pixiv**） |
+| 5 | `pixivlist [页码]` | 所有人 | Pixiv 订阅列表，每页 20，默认第 1 页 |
+| 5 | `remove <序号>` | **群主/管理员** | 移除目标（序号来自 `list`） |
+| 5 | `remove pixiv <UID>` | **群主/管理员** | 取消 Pixiv 订阅（UID 或名字） |
 | 5 | `help` | 所有人 | 帮助 |
 | 5 | `hello ON/OFF` | 所有人 | 开关启动问候 |
 | 5 | `chat` | 所有人 | 随机台词 |
@@ -318,8 +354,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.2.1
-- **测试**：95 passed
+- **版本**：v2.3.0
+- **测试**：110 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：26 条（锁定 10 / 可整理 16）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

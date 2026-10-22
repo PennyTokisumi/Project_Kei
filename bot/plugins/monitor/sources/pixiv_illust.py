@@ -40,7 +40,22 @@ from typing import Optional
 from httpx import AsyncClient
 from nonebot import logger as nb_logger
 
+import time as time_module
+
 from .base import Item, SourceBase
+
+# ─── 失败退避 ─────────────────────────────────────────────
+# 早期版本遇到 403/429 只打一条 warning 就返回空列表，
+# 从日志上根本分不清「画师没更新」和「我们被限流了」。
+# 现在会指数退避，并把退避时长明确写进日志。
+
+# 明确表示被限流的状态码
+RATE_LIMIT_STATUS = frozenset({403, 429})
+# 被限流时的退避基数：300s → 600s → 1200s …（封顶 1 小时）
+BACKOFF_BASE_SECONDS = 300
+# 网络异常等普通失败：60s → 120s → 240s …
+BACKOFF_MILD_SECONDS = 60
+BACKOFF_MAX_SECONDS = 3600
 
 PIXIV_PROFILE_TOP = "https://www.pixiv.net/ajax/user/{uid}/profile/top"
 PIXIV_ILLUST_PAGES = "https://www.pixiv.net/ajax/illust/{pid}/pages"
@@ -133,6 +148,39 @@ async def fetch_page_urls(pid: str, uid: Optional[str] = None) -> list[str]:
 class PixivIllust(SourceBase):
     """Pixiv 画师的作品更新监测源"""
 
+    def __init__(self, target_id: str, group_id: int):
+        super().__init__(target_id, group_id)
+        # 失败退避状态（跨轮次保留：同一个 source 实例由调度器复用）
+        self._fail_streak = 0
+        self._backoff_until = 0.0
+
+    # ─── 退避 ────────────────────────────────────────────
+
+    def _register_failure(self, reason: str, severe: bool) -> None:
+        self._fail_streak += 1
+        base = BACKOFF_BASE_SECONDS if severe else BACKOFF_MILD_SECONDS
+        delay = min(base * (2 ** (self._fail_streak - 1)), BACKOFF_MAX_SECONDS)
+        self._backoff_until = time_module.time() + delay
+        level = "限流" if severe else "失败"
+        nb_logger.warning(
+            f"Pixiv {level}：{reason} [uid={self.target_id}]，"
+            f"退避 {delay}s（连续第 {self._fail_streak} 次）"
+        )
+
+    def _reset_backoff(self) -> None:
+        if self._fail_streak:
+            nb_logger.info(
+                f"Pixiv 恢复正常 [uid={self.target_id}]（此前连续失败 "
+                f"{self._fail_streak} 次）"
+            )
+        self._fail_streak = 0
+        self._backoff_until = 0.0
+
+    @property
+    def is_backing_off(self) -> bool:
+        """当前是否处于退避期（供测试与诊断用）"""
+        return time_module.time() < self._backoff_until
+
     @property
     def platform(self) -> str:
         return "pixiv"
@@ -151,22 +199,36 @@ class PixivIllust(SourceBase):
         因为每轮轮询里真正的新作品通常只有 0～1 个。
         """
         url = PIXIV_PROFILE_TOP.format(uid=self.target_id)
+
+        # 退避期内直接跳过，不再打 Pixiv
+        now = time_module.time()
+        if now < self._backoff_until:
+            nb_logger.debug(
+                f"Pixiv 退避中 [uid={self.target_id}]，还剩 "
+                f"{int(self._backoff_until - now)}s"
+            )
+            return []
+
         try:
             async with AsyncClient(timeout=20) as client:
                 resp = await client.get(url, headers=pixiv_headers(self.target_id))
                 if resp.status_code != 200:
-                    nb_logger.warning(
-                        f"Pixiv 作品列表 HTTP {resp.status_code} [uid={self.target_id}]"
+                    # 403/429 是被限流的明确信号，重罚；其他状态码按普通失败处理
+                    self._register_failure(
+                        f"作品列表 HTTP {resp.status_code}",
+                        severe=resp.status_code in RATE_LIMIT_STATUS,
                     )
                     return []
                 data = resp.json()
         except Exception as e:
-            nb_logger.warning(f"Pixiv 作品列表请求失败 [uid={self.target_id}]: {e!r}")
+            self._register_failure(f"作品列表请求失败 {e!r}", severe=False)
             return []
 
         if data.get("error"):
-            nb_logger.warning(f"Pixiv 返回错误 [uid={self.target_id}]: {data.get('error')}")
+            self._register_failure(f"返回错误 {data.get('error')}", severe=False)
             return []
+
+        self._reset_backoff()
 
         body = data.get("body") or {}
         works: dict[str, dict] = {}

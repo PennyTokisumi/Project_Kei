@@ -232,7 +232,7 @@ class TestPollInterval:
         from config import config
 
         src = make_source()
-        assert poll_interval_for(src) == max(60, config.pixiv_poll_interval)
+        assert poll_interval_for(src, 0) == max(60, config.pixiv_poll_interval)
 
     def test_pixiv_interval_has_floor(self):
         """即使配置成 1 秒也不允许，Pixiv 会被限流"""
@@ -242,9 +242,82 @@ class TestPollInterval:
         original = config.pixiv_poll_interval
         try:
             config.pixiv_poll_interval = 1
-            assert poll_interval_for(make_source()) >= 60
+            assert poll_interval_for(make_source(), 0) >= 60
         finally:
             config.pixiv_poll_interval = original
+
+    def test_interval_scales_with_subscription_count(self):
+        """订阅越多，单目标间隔越长，把总请求速率压在常数上"""
+        from plugins.monitor.scheduler import (
+            PIXIV_MIN_SECONDS_PER_TARGET,
+            pixiv_interval_for,
+        )
+
+        assert pixiv_interval_for(0) == 300          # 下限
+        assert pixiv_interval_for(20) == 300         # 20 × 6 仍在下限内
+        assert pixiv_interval_for(100) == 100 * PIXIV_MIN_SECONDS_PER_TARGET  # 600
+        assert pixiv_interval_for(100) > pixiv_interval_for(20)
+
+    def test_jitter_larger_for_pixiv(self):
+        """Pixiv 抖动要比其他平台大，削掉整齐划一的请求特征"""
+        from plugins.monitor.scheduler import jitter_for
+
+        assert jitter_for(make_source()) == 60
+
+
+# ─── 失败退避 ──────────────────────────────────────────────
+
+class TestBackoff:
+    """403/429 不能静默当成「没更新」，必须退避并在日志里写清楚"""
+
+    def test_rate_limit_starts_backoff(self):
+        src = make_source()
+        assert src.is_backing_off is False
+        src._register_failure("HTTP 429", severe=True)
+        assert src.is_backing_off is True
+
+    def test_backoff_grows_exponentially(self):
+        import time
+
+        src = make_source()
+        src._register_failure("HTTP 429", severe=True)
+        first = src._backoff_until - time.time()
+        src._register_failure("HTTP 429", severe=True)
+        second = src._backoff_until - time.time()
+        assert second > first
+
+    def test_backoff_capped(self):
+        import time
+
+        from plugins.monitor.sources.pixiv_illust import BACKOFF_MAX_SECONDS
+
+        src = make_source()
+        for _ in range(12):
+            src._register_failure("HTTP 429", severe=True)
+        assert (src._backoff_until - time.time()) <= BACKOFF_MAX_SECONDS + 1
+
+    def test_severe_longer_than_mild(self):
+        import time
+
+        severe, mild = make_source(), make_source()
+        severe._register_failure("HTTP 429", severe=True)
+        mild._register_failure("网络异常", severe=False)
+        assert (mild._backoff_until - time.time()) < (severe._backoff_until - time.time())
+
+    def test_reset_clears_state(self):
+        src = make_source()
+        src._register_failure("HTTP 403", severe=True)
+        src._reset_backoff()
+        assert src.is_backing_off is False
+        assert src._fail_streak == 0
+
+    def test_fetch_short_circuits_during_backoff(self):
+        """退避期内直接返回空列表，不再发请求（也不应该抛异常）"""
+        import asyncio
+
+        src = make_source()
+        src._register_failure("HTTP 429", severe=True)
+        assert asyncio.run(src.fetch()) == []
 
 
 # ─── 工厂注册 ──────────────────────────────────────────────
@@ -258,6 +331,74 @@ class TestFactory:
     def test_alias_maps_to_full_key(self):
         from plugins.admin.commands import PLATFORM_ALIASES
         assert PLATFORM_ALIASES["pixiv"] == "pixiv_illust"
+
+
+# ─── pixivlist 分页 ────────────────────────────────────────
+
+class TestPixivListPagination:
+    """pixivlist 每页 20 个，按添加顺序（id 升序）"""
+
+    @staticmethod
+    def _targets(n: int):
+        return [
+            {"id": 10000 + i, "target_id": str(1000 + i), "target_name": f"画师{i}"}
+            for i in range(n)
+        ]
+
+    def test_empty(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        info = paginate_pixiv([], 1)
+        assert info["empty"] is True
+        assert info["ok"] is False
+
+    def test_first_page(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        info = paginate_pixiv(self._targets(45), 1)
+        assert info["ok"] is True
+        assert info["pages"] == 3
+        assert (info["start"], info["end"]) == (1, 20)
+        assert len(info["items"]) == 20
+        assert info["items"][0]["target_id"] == "1000"
+
+    def test_last_page_partial(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        info = paginate_pixiv(self._targets(45), 3)
+        assert (info["start"], info["end"]) == (41, 45)
+        assert len(info["items"]) == 5
+        assert info["items"][-1]["target_id"] == "1044"
+
+    def test_exact_multiple(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        info = paginate_pixiv(self._targets(40), 2)
+        assert info["pages"] == 2
+        assert info["end"] == 40
+        assert len(info["items"]) == 20
+
+    def test_out_of_range(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        for bad in (0, 4, 999):
+            info = paginate_pixiv(self._targets(45), bad)
+            assert info["ok"] is False
+            assert info["empty"] is False
+            assert info["pages"] == 3
+            assert info["total"] == 45
+
+    def test_page_size_override(self):
+        from plugins.admin.commands import paginate_pixiv
+
+        info = paginate_pixiv(self._targets(10), 1, page_size=3)
+        assert info["pages"] == 4
+        assert len(info["items"]) == 3
+
+    def test_default_page_size_is_20(self):
+        from plugins.admin.commands import PIXIV_LIST_PAGE_SIZE
+
+        assert PIXIV_LIST_PAGE_SIZE == 20
 
 
 # ─── 静默同步 / 补推截断 ───────────────────────────────────

@@ -3,8 +3,10 @@
 import random
 from pathlib import Path
 
-from nonebot import on_message, on_notice, get_bot
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment, PokeNotifyEvent
+from nonebot import on_message, on_notice, get_bot, logger as nb_logger
+from nonebot.adapters.onebot.v11 import (
+    Bot, GroupMessageEvent, Message, MessageSegment, PokeNotifyEvent,
+)
 from nonebot.rule import to_me, startswith
 
 from config import config, VERSION
@@ -32,6 +34,8 @@ PLATFORM_SHORT_NAMES = {
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=3)
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
 list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
+# Pixiv 订阅单独一条命令：订阅数可能上百，不能和 list 混在一起
+pixivlist_cmd = on_message(rule=to_me() & startswith("pixivlist"), priority=5)
 remove_cmd = on_message(rule=to_me() & startswith("remove"), priority=5)
 help_cmd = on_message(rule=to_me() & startswith("help"), priority=5)
 hello_cmd = on_message(rule=to_me() & startswith("hello"), priority=5)
@@ -113,11 +117,19 @@ async def handle_add(event: GroupMessageEvent):
 
 @list_cmd.handle()
 async def handle_list(event: GroupMessageEvent):
-    """列出本群所有监测目标"""
+    """列出本群监测目标（**不含 Pixiv**，Pixiv 走 pixivlist）"""
     group_id = event.group_id
-    targets = [t for t in list_targets() if t["group_id"] == group_id]
+    targets = [
+        t for t in list_targets()
+        if t["group_id"] == group_id and t["platform"] != "pixiv_illust"
+    ]
 
-    if not targets:
+    pixiv_total = sum(
+        1 for t in list_targets()
+        if t["group_id"] == group_id and t["platform"] == "pixiv_illust"
+    )
+
+    if not targets and not pixiv_total:
         await list_cmd.finish(
             Message("\nSensei，目前暂无监测目标。"),
             at_sender=True,
@@ -136,18 +148,139 @@ async def handle_list(event: GroupMessageEvent):
         plat_short = PLATFORM_SHORT_NAMES.get(plat, plat)
         lines.append(f"  {idx}. [{plat_short}] {display}")
 
+    if pixiv_total:
+        lines.append("")
+        lines.append(f"另有 {pixiv_total} 个 Pixiv 订阅，用 pixivlist 查看。")
+
     await list_cmd.finish(
         Message("\n".join(lines)),
         at_sender=True,
     )
 
 
+# ─── Pixiv 订阅列表（分页）────────────────────────────────
+
+PIXIV_LIST_PAGE_SIZE = 20
+
+
+def paginate_pixiv(targets: list[dict], page: int,
+                   page_size: int = PIXIV_LIST_PAGE_SIZE) -> dict:
+    """把 Pixiv 订阅切成页（纯函数，方便单测）
+
+    返回 dict：
+      empty=True            → 该群没有 Pixiv 订阅
+      ok=False（非 empty）  → 页码越界，带 pages/total 供提示
+      ok=True               → items / start / end / pages / total / offset
+    """
+    total = len(targets)
+    if total == 0:
+        return {"ok": False, "empty": True, "total": 0, "pages": 0}
+
+    pages = (total + page_size - 1) // page_size
+    if page < 1 or page > pages:
+        return {"ok": False, "empty": False, "total": total,
+                "pages": pages, "page": page}
+
+    start = (page - 1) * page_size
+    end = min(start + page_size, total)
+    return {
+        "ok": True, "empty": False, "page": page, "pages": pages,
+        "total": total, "start": start + 1, "end": end,
+        "offset": start, "items": targets[start:end],
+    }
+
+
+@pixivlist_cmd.handle()
+async def handle_pixivlist(event: GroupMessageEvent, bot: Bot):
+    """Pixiv 订阅列表，合并转发 + 分页
+
+    不带参数 = 第 1 页；每页 20 个；排序按添加顺序（id 升序）——
+    这样新增订阅只追加到末尾，前面的页永远稳定。
+    """
+    group_id = event.group_id
+    text = event.get_plaintext().strip()
+    parts = text.split()
+
+    page = 1
+    if len(parts) >= 2:
+        if not parts[1].isdigit():
+            await pixivlist_cmd.finish(
+                Message("格式: pixivlist [页码]\n例如 pixivlist 2"),
+                at_sender=True,
+            )
+        page = int(parts[1])
+
+    targets = [
+        t for t in list_targets()
+        if t["group_id"] == group_id and t["platform"] == "pixiv_illust"
+    ]
+
+    info = paginate_pixiv(targets, page)
+
+    if info.get("empty"):
+        await pixivlist_cmd.finish(
+            Message("\nSensei，本群还没有 Pixiv 订阅。\n用 add pixiv <画师UID> 添加。"),
+            at_sender=True,
+        )
+
+    if not info["ok"]:
+        await pixivlist_cmd.finish(
+            Message(f"\n页码超出范围。共 {info['pages']} 页"
+                    f"（{info['total']} 个订阅），请用 1 ~ {info['pages']}。"),
+            at_sender=True,
+        )
+
+    lines = [f"Pixiv 订阅  {info['start']}–{info['end']} / 共 {info['total']}"]
+    for i, t in enumerate(info["items"], start=info["offset"] + 1):
+        name = (t.get("target_name") or "").strip()
+        tid = t["target_id"]
+        lines.append(f"{i}. {name} ({tid})" if name and name != tid else f"{i}. {tid}")
+
+    nav = []
+    if info["page"] > 1:
+        nav.append(f"上一页：pixivlist {info['page'] - 1}")
+    if info["page"] < info["pages"]:
+        nav.append(f"下一页：pixivlist {info['page'] + 1}")
+    lines.append("")
+    lines.append("  |  ".join(nav) if nav else "这是唯一一页。")
+
+    body = "\n".join(lines)
+    node = {
+        "type": "node",
+        "data": {
+            "name": "Kei",
+            "uin": str(bot.self_id),
+            "content": [MessageSegment.text(body)],
+        },
+    }
+    preview = {
+        "source": f"Pixiv 订阅 {info['start']}–{info['end']} / 共 {info['total']}",
+        "news": [{"text": f"第 {info['page']}/{info['pages']} 页"}],
+        "summary": "查看 1 条转发消息",
+    }
+
+    try:
+        await bot.call_api(
+            "send_group_forward_msg",
+            group_id=group_id,
+            messages=[node],
+            **preview,
+        )
+    except Exception as e:
+        # 合并转发失败就退回普通文本，别让列表直接发不出来
+        nb_logger.warning(f"pixivlist 合并转发失败，回退文本: {e!r}")
+        await pixivlist_cmd.finish(Message("\n" + body), at_sender=True)
+
+    await pixivlist_cmd.finish()
+
+
 @remove_cmd.handle()
 async def handle_remove(event: GroupMessageEvent):
     """移除监测目标（仅群主/管理员可用）
 
-    格式: remove <id>
-    id 通过 list 命令查看
+    两种格式：
+      remove <序号>          → 序号来自 list（不含 Pixiv）
+      remove pixiv <UID>     → 按画师 UID 精确移除，也可以用名字模糊匹配
     """
     # 权限校验：仅群主或管理员可用
     if event.sender.role not in ("owner", "admin"):
@@ -159,14 +292,56 @@ async def handle_remove(event: GroupMessageEvent):
     text = event.get_plaintext().strip()
     parts = text.split()
 
+    # ── 形式一：remove pixiv <uid / 名字> ──
+    if len(parts) >= 3 and parts[1].lower() in PLATFORM_ALIASES:
+        key = parts[2].strip()
+        pixiv = [
+            t for t in list_targets()
+            if t["group_id"] == event.group_id and t["platform"] == "pixiv_illust"
+        ]
+        match = [t for t in pixiv if t["target_id"] == key]
+        if not match:
+            match = [t for t in pixiv if key in (t.get("target_name") or "")]
+
+        if not match:
+            await remove_cmd.finish(
+                Message(f"❌ 本群没有订阅 {key}\n用 pixivlist 查看当前订阅"),
+                at_sender=True,
+            )
+        if len(match) > 1:
+            names = "\n".join(
+                f"  · {t.get('target_name') or t['target_id']} ({t['target_id']})"
+                for t in match[:10]
+            )
+            await remove_cmd.finish(
+                Message(f"匹配到 {len(match)} 个，请改用 UID 精确移除：\n{names}"),
+                at_sender=True,
+            )
+
+        target = match[0]
+        remove_target(target["id"])
+        display = target.get("target_name") or target["target_id"]
+        await remove_cmd.send(
+            Message(f"\nSensei，已移除 Pixiv 订阅。{display} ({target['target_id']})"),
+            at_sender=True,
+        )
+        await reload_targets()
+        return
+
+    # ── 形式二：remove <序号>（只数 list 里显示的目标）──
     if len(parts) < 2 or not parts[1].strip().isdigit():
         await remove_cmd.finish(
-            Message("格式: remove <ID>\n使用 list 查看 ID"),
+            Message("格式: remove <序号>        使用 list 查看\n"
+                    "      remove pixiv <UID>  用 pixivlist 查看"),
             at_sender=True,
         )
 
     idx = int(parts[1].strip())
-    targets = [t for t in list_targets() if t["group_id"] == event.group_id]
+    # 必须和 list 用同一套过滤，否则序号错位会删错目标
+    targets = [
+        t for t in list_targets()
+        if t["group_id"] == event.group_id and t["platform"] != "pixiv_illust"
+    ]
 
     if idx < 1 or idx > len(targets):
         await remove_cmd.finish(
@@ -330,8 +505,10 @@ async def handle_help(event: GroupMessageEvent):
         "chat  -  和Kei聊天",
         "kawaii  -  夸一夸Kei",
         "hello ON/OFF  -  开关启动问候",
-        "list  -  显示本群监测列表",
+        "list  -  显示本群监测列表（B站/斗鱼）",
+        "pixivlist [页码]  -  显示本群Pixiv订阅（每页20）",
         "remove <序号>  -  移除监测目标",
+        "remove pixiv <UID>  -  取消Pixiv订阅",
         "add bilibili_live <房间号>  -  添加B站直播监测",
         "add bilibili_dynamic <UID>  -  添加B站动态监测",
         "add douyu_live <房间号>  -  添加斗鱼直播监测",

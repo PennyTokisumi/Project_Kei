@@ -20,6 +20,7 @@ from .sources.pixiv_illust import PixivIllust
 from tray import update_status
 
 import time as _time_module
+import random
 from datetime import datetime, timedelta
 
 scheduler = AsyncIOScheduler()
@@ -32,6 +33,9 @@ _synced_targets: set[tuple[str, str]] = set()
 
 # 新添加的监测目标延迟多久跑第一次（秒）
 NEW_TARGET_FIRST_POLL_DELAY = 10
+
+# Pixiv：每个订阅平均占用多少秒的轮询间隔（见 pixiv_interval_for）
+PIXIV_MIN_SECONDS_PER_TARGET = 6
 
 # 重启后最多补推几条 Pixiv 作品（多出来的静默标记，避免停机久了刷屏）
 # 注意：补推的内容会合并成**一条**转发消息，不是多条
@@ -46,15 +50,46 @@ SOURCE_FACTORY: dict[str, type[SourceBase]] = {
 }
 
 
-def poll_interval_for(source: SourceBase) -> int:
+def poll_interval_for(source: SourceBase, pixiv_count: Optional[int] = None) -> int:
     """按平台取轮询间隔
 
     Pixiv 反爬比 B站严，而且每轮都要打画师主页，间隔必须拉长；
     其余平台沿用全局 poll_interval。
+
+    ``pixiv_count`` 是当前 Pixiv 订阅总数。传 None 时自己查一次库 ——
+    批量循环里请在外面算好再传进来，免得每个目标都查一遍。
     """
     if source.platform == "pixiv":
-        return max(60, config.pixiv_poll_interval)
+        if pixiv_count is None:
+            try:
+                pixiv_count = sum(
+                    1 for t in list_targets() if t["platform"] == "pixiv_illust"
+                )
+            except Exception:
+                # 库还没建表（例如单元测试）时退化为下限，不要因此抛异常
+                pixiv_count = 0
+        return pixiv_interval_for(pixiv_count)
     return max(10, config.poll_interval)
+
+
+def pixiv_interval_for(target_count: int) -> int:
+    """Pixiv 轮询间隔自适应：订阅越多，单目标间隔越长
+
+    目标是把**总请求速率**压在常数上，而不是让每个目标都死守 300 秒 ——
+    100 个订阅按 300 秒一轮就是约 0.33 次/秒，持续不断，很容易被限流。
+
+    每个订阅平均占 6 秒：20 个以内仍是 300 秒（下限），100 个自动变 600 秒。
+    """
+    floor = max(60, config.pixiv_poll_interval)
+    return max(floor, int(target_count) * PIXIV_MIN_SECONDS_PER_TARGET)
+
+
+def jitter_for(source: SourceBase) -> int:
+    """轮询抖动（秒）
+
+    Pixiv 用大得多的抖动，把请求摊开，削掉「整齐划一」的机器特征。
+    """
+    return 60 if source.platform == "pixiv" else 5
 
 
 def _sync_pixiv_new_items(source: SourceBase, new_items: list) -> list:
@@ -271,13 +306,27 @@ async def start():
     targets = list_targets()
     update_status(targets_total=len(targets), alive=True)
 
+    pixiv_count = sum(1 for t in targets if t["platform"] == "pixiv_illust")
+    if pixiv_count:
+        nb_logger.info(
+            f"Pixiv 订阅 {pixiv_count} 个 → 轮询间隔 {pixiv_interval_for(pixiv_count)}s"
+        )
+
     for t in targets:
         source = _make_source(t)
         if source is None:
             continue
 
-        interval = poll_interval_for(source)
+        interval = poll_interval_for(source, pixiv_count)
         job_id = f"{source.platform}/{source.target_id}/{source.group_id}"
+
+        # 启动错峰：把首轮随机散布在 [10s, interval] 内。
+        # 否则所有任务都在「开机 + interval」那一刻同时触发 ——
+        # 100 个 Pixiv 订阅就是 100 个请求挤在几秒里，必被限流。
+        spread = max(NEW_TARGET_FIRST_POLL_DELAY + 1, interval)
+        first_run = datetime.now() + timedelta(
+            seconds=random.uniform(NEW_TARGET_FIRST_POLL_DELAY, spread)
+        )
 
         scheduler.add_job(
             poll_source,
@@ -285,11 +334,15 @@ async def start():
             seconds=interval,
             id=job_id,
             args=[source],
+            next_run_time=first_run,
             replace_existing=True,
             misfire_grace_time=30,
-            jitter=5,  # 随机偏移避免多群同时请求被限流
+            jitter=jitter_for(source),
         )
-        nb_logger.info(f"注册轮询任务 [{job_id}] 间隔 {interval}s")
+        nb_logger.info(
+            f"注册轮询任务 [{job_id}] 间隔 {interval}s "
+            f"抖动 {jitter_for(source)}s 首轮 {first_run:%H:%M:%S}"
+        )
 
     if targets:
         scheduler.start()
@@ -311,6 +364,7 @@ async def reload_targets():
     update_status(targets_total=len(targets), alive=True)
 
     current_jobs = {job.id for job in scheduler.get_jobs()}
+    pixiv_count = sum(1 for t in targets if t["platform"] == "pixiv_illust")
 
     # 移除已删除的目标
     wanted_ids: set[str] = set()
@@ -322,7 +376,7 @@ async def reload_targets():
         wanted_ids.add(job_id)
 
         if job_id not in current_jobs:
-            interval = poll_interval_for(source)
+            interval = poll_interval_for(source, pixiv_count)
             scheduler.add_job(
                 poll_source,
                 "interval",
@@ -330,12 +384,12 @@ async def reload_targets():
                 id=job_id,
                 args=[source],
                 # 新加的目标立刻跑一次，不用干等一个完整周期。
-                # Pixiv 周期是 300 秒，等满会让人以为没生效。
+                # Pixiv 周期是 300 秒起，等满会让人以为没生效。
                 # 留 10 秒缓冲，避免和 add 指令的回复撞在一起。
                 next_run_time=datetime.now() + timedelta(seconds=NEW_TARGET_FIRST_POLL_DELAY),
                 replace_existing=True,
                 misfire_grace_time=30,
-                jitter=5,
+                jitter=jitter_for(source),
             )
             nb_logger.info(
                 f"新增轮询任务 [{job_id}] 间隔 {interval}s（{NEW_TARGET_FIRST_POLL_DELAY}s 后先跑一次）"
