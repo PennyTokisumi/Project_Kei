@@ -198,6 +198,10 @@ class TrayIcon:
             logger.warning("pystray 未安装，托盘图标不可用")
             return
 
+        # 留一条启动记录：和 shutdown.log 成对出现，
+        # 「有启动、没有对应退出记录」就说明进程是被外部强杀的
+        _log_shutdown("进程启动（托盘已就绪）")
+
         # healthy=False 只影响图标文件缺失时的回退圆点颜色（黄点 = 启动中）
         icon_image = _create_icon(healthy=False)
         self._icon = pystray.Icon(
@@ -250,7 +254,13 @@ class TrayIcon:
         icon.menu = self._build_menu()
 
     def _on_shutdown(self, icon: "pystray.Icon", item):
-        """右键关闭机器人 — 安全关闭所有相关进程"""
+        """右键关闭机器人 — 安全关闭所有相关进程
+
+        ⚠️ 这条路径最后走的是 `os._exit(0)`，**连 atexit 都不执行**，
+        所以如果不主动写一行日志，事后完全查不到是"托盘关的"还是"崩溃/被杀"。
+        2026-10-23 就因此排查了很久（表现：SnowLuma 日志干净截断、无崩溃事件、
+        无关机休眠记录，整个服务凭空消失 21.5 小时）。
+        """
         try:
             icon.visible = False
         except Exception:
@@ -259,7 +269,8 @@ class TrayIcon:
             icon.stop()
         except Exception:
             pass
-        _kill_snowluma()
+        killed = _kill_snowluma()
+        _log_shutdown("托盘菜单「关闭机器人」", killed)
         # 清理 pid 文件，避免重启时误判"已在运行"
         try:
             import config
@@ -271,9 +282,44 @@ class TrayIcon:
 
 # ─── 进程管理 ──────────────────────────────────────────────────
 
-def _kill_snowluma():
-    """杀掉 SnowLuma 及其相关进程（cmd + node）"""
+def _shutdown_log_path() -> Path:
+    """退出审计日志的位置：data/logs/shutdown.log"""
+    try:
+        import config
+        return config.DATA_DIR / "logs" / "shutdown.log"
+    except Exception:
+        return Path("data") / "logs" / "shutdown.log"
+
+
+def _log_shutdown(reason: str, killed: list[int] | None = None) -> None:
+    """在进程消失前留一行痕迹
+
+    为什么需要它：托盘关闭走的是 `os._exit(0)`，不执行 atexit、不刷日志缓冲，
+    事后从任何地方都看不出"是谁关的"。这一行是唯一的证据。
+
+    如果 `shutdown.log` 里**没有**对应时间的记录、服务却没了，
+    说明是被外部强杀（taskkill / 任务管理器 / 系统会话注销），而不是点了托盘菜单。
+    """
+    try:
+        from datetime import datetime
+        path = _shutdown_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = (
+            f"{datetime.now():%Y-%m-%d %H:%M:%S}  {reason}  "
+            f"self_pid={os.getpid()}  killed={killed or []}\n"
+        )
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+        logger.info(f"已记录退出原因: {line.strip()}")
+    except Exception as e:
+        logger.warning(f"写退出审计日志失败: {e}")
+
+
+def _kill_snowluma() -> list[int]:
+    """杀掉 SnowLuma 及其相关进程（cmd + node），返回被终止的 PID 列表"""
     killed = set()
+    killed_order: list[int] = []
 
     def _kill_by_port(port):
         """通过监听端口反查 PID 并终止"""
@@ -289,6 +335,7 @@ def _kill_snowluma():
                     try:
                         os.kill(int(pid), signal.SIGTERM)
                         killed.add(int(pid))
+                        killed_order.append(int(pid))
                         logger.info(f"已终止 SnowLuma 进程 PID={pid} (port {port})")
                     except Exception:
                         pass
@@ -310,6 +357,7 @@ def _kill_snowluma():
                         try:
                             os.kill(int(p), signal.SIGTERM)
                             killed.add(int(p))
+                            killed_order.append(int(p))
                             logger.info(f"已终止 SnowLuma 进程 PID={p} (keyword: {keyword})")
                         except Exception:
                             pass
@@ -323,6 +371,8 @@ def _kill_snowluma():
     # 2) 通过命令行关键字杀 cmd 父进程
     for kw in ("snowluma", "SnowLuma"):
         _kill_by_keyword(kw)
+
+    return killed_order
 
 
 # 全局单例
