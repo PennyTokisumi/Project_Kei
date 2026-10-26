@@ -517,3 +517,24 @@ class TestNewTargetImmediatePoll:
         assert 0 <= delay <= 15, f"首次延迟应接近 10 秒，实际 {delay:.1f}s"
         # 间隔仍然按平台走
         assert captured["seconds"] == 300
+
+# ─── 批量并发下载 ──────────────────────────────────────────
+
+class TestDownloadMany:
+    """download_many_as_base64：并发、保序、失败项为 None"""
+
+    def test_empty_returns_empty(self):
+        import asyncio
+        from plugins.monitor.media import download_many_as_base64
+
+        assert asyncio.run(download_many_as_base64([], {})) == []
+
+    def test_all_failures_keep_order_and_length(self):
+        """全失败时也要返回等长列表，元素全是 None（不能塌缩）"""
+        import asyncio
+        from plugins.monitor.media import download_many_as_base64
+
+        bad = ["http://127.0.0.1:1/a.jpg", "http://127.0.0.1:1/b.jpg"]
+        out = asyncio.run(download_many_as_base64(bad, {}, concurrency=2))
+        assert len(out) == 2
+        assert out == [None, None]

@@ -319,7 +319,7 @@ async def build_pixiv_forward_msg(items: list[Item]) -> list[dict]:
     单条作品最多 `pixiv_max_images` 张，超出的在末尾提示去看原链接。
     """
     from config import config
-    from .media import download_as_base64
+    from .media import download_many_as_base64
     from .sources.pixiv_illust import fetch_page_urls, image_headers
 
     max_images = max(1, config.pixiv_max_images)
@@ -332,11 +332,14 @@ async def build_pixiv_forward_msg(items: list[Item]) -> list[dict]:
         urls = await fetch_page_urls(item.id, item.target_id)
         take = urls[:max_images]
 
+        # 并发下载：内部复用同一个 HTTP 客户端，压缩走线程池。
+        # 返回结果与 take 同序，失败的项是 None。
+        results = await download_many_as_base64(
+            take, image_headers(), max_side=max_side
+        )
+
         images_added = 0
-        for url in take:
-            b64 = await download_as_base64(
-                url, image_headers(), max_side=max_side
-            )
+        for b64 in results:
             if b64:
                 content_parts.append(MessageSegment.image(b64))
                 images_added += 1

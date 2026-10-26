@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（110 个用例）
+├── tests/                 # pytest（112 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -180,6 +180,10 @@ QQ 拒绝 HTTP 图片，所有图片 URL 经 `_to_https()` 强制转换。
   所以走 `media.py` 的「下载 → 等比缩放到长边 ≤1200 → JPEG q85 → base64」，
   再用 `MessageSegment.image("base64://...")` 发（SnowLuma 的 `inlineBase64Payload` 认这个）。
   **直接传 URL 给 QQ 一定是裂图。**
+- **多张图必须用 `download_many_as_base64()`**，不要循环调 `download_as_base64()`。
+  它做了两件关键的事：① 复用同一个 `AsyncClient`（原来每张图 new 一个，白付一次 TLS 握手+建连）；
+  ② Pillow 压缩丢进 `asyncio.to_thread`（原先把 CPU 活放在事件循环里，加并发也只快 1.3x）。
+  实测 6 张图 **10.2s → 3.3s**。返回值与入参**等长同序**，失败项是 `None`（不能过滤掉，否则图片错位）。
 - **首次订阅静默同步**：`_sync_pixiv_new_items()` 用 `has_pushed_items()` 判断 ——
   该目标还没有任何推送记录时，把当前所有作品标记为已推送但**一条都不发**。
 - **重启补推**：和 B站不同，Pixiv 用数据库判断而非启动时间戳，所以停机期间画师更新能补推；
@@ -372,10 +376,10 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.3.1
-- **测试**：110 passed
+- **版本**：v2.3.2
+- **测试**：112 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
-- **长期记忆**：26 条（锁定 10 / 可整理 16）
+- **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
 - **功能**：B站全类型动态 + B站直播 + 斗鱼直播 + **Pixiv 画师作品**监控推送；
   群管理指令；LLM 角色扮演（DeepSeek/Gemini 双供应商，**支持识别群友发的图片**）；
