@@ -33,10 +33,16 @@ class LLMClient:
     @staticmethod
     def _record_usage(model: str,
                       prompt_tokens: int,
-                      completion_tokens: int):
-        """记录 token 用量到数据库"""
+                      completion_tokens: int,
+                      cache_hit_tokens: int = 0,
+                      cache_miss_tokens: int = 0):
+        """记录 token 用量到数据库（缓存字段缺失时按 0 记）"""
         from .database import log_token_usage
-        log_token_usage(model, prompt_tokens, completion_tokens)
+        log_token_usage(
+            model, prompt_tokens, completion_tokens,
+            cache_hit_tokens=cache_hit_tokens,
+            cache_miss_tokens=cache_miss_tokens,
+        )
 
     async def chat(
         self,
@@ -98,18 +104,31 @@ class LLMClient:
 
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
+        # DeepSeek 前缀缓存的命中 / 未命中 token 数；
+        # Gemini 等供应商的 usage 没有这两个字段，按 0 处理
+        cache_hit_tokens = usage.get("prompt_cache_hit_tokens") or 0
+        cache_miss_tokens = usage.get("prompt_cache_miss_tokens") or 0
         nb_logger.info(
             f"LLM 请求完成 [{self._model}] "
             f"prompt={prompt_tokens} completion={completion_tokens} "
+            f"cache={cache_hit_tokens}/{cache_miss_tokens} "
             f"耗时={elapsed:.1f}s"
         )
 
-        self._record_usage(self._model, prompt_tokens, completion_tokens)
+        self._record_usage(
+            self._model, prompt_tokens, completion_tokens,
+            cache_hit_tokens, cache_miss_tokens,
+        )
 
         return {
             "content": message.get("content") or "",
             "tool_calls": message.get("tool_calls"),
-            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "prompt_cache_hit_tokens": cache_hit_tokens,
+                "prompt_cache_miss_tokens": cache_miss_tokens,
+            },
         }
 
 

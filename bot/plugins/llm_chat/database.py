@@ -5,6 +5,24 @@ import time
 from utils.db import get_conn as _get_conn
 
 
+def _ensure_token_usage_cache_columns(conn):
+    """幂等迁移：给旧库的 llm_token_usage 补上缓存命中相关列
+
+    旧版本建表时没有 cache_hit_tokens / cache_miss_tokens。
+    这里先用 PRAGMA table_info 读出已有列，只对缺失的列执行 ALTER TABLE，
+    因此重复调用不会报 "duplicate column name"。
+    """
+    existing = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(llm_token_usage)").fetchall()
+    }
+    for column in ("cache_hit_tokens", "cache_miss_tokens"):
+        if column not in existing:
+            conn.execute(
+                f"ALTER TABLE llm_token_usage ADD COLUMN {column} INTEGER DEFAULT 0"
+            )
+
+
 def init_llm_db():
     """初始化 LLM 相关表"""
     conn = _get_conn()
@@ -29,9 +47,13 @@ def init_llm_db():
             model TEXT NOT NULL,
             prompt_tokens INTEGER DEFAULT 0,
             completion_tokens INTEGER DEFAULT 0,
+            cache_hit_tokens INTEGER DEFAULT 0,
+            cache_miss_tokens INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # 旧库补列（幂等）
+    _ensure_token_usage_cache_columns(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS llm_short_term (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -262,13 +284,21 @@ def replace_memories(new_items: list[tuple[str, float]]):
 # ─── Token 用量 ──────────────────────────────────────
 
 def log_token_usage(model: str, prompt_tokens: int, completion_tokens: int,
-                    group_id: int = 0):
-    """记录一次 API 调用的 token 用量"""
+                    group_id: int = 0, cache_hit_tokens: int = 0,
+                    cache_miss_tokens: int = 0):
+    """记录一次 API 调用的 token 用量
+
+    cache_hit_tokens / cache_miss_tokens 是 DeepSeek 前缀缓存的命中/未命中数，
+    默认为 0，保证旧的 3 参数调用方式（以及没有缓存字段的供应商）依然可用。
+    """
     conn = _get_conn()
     conn.execute(
-        "INSERT INTO llm_token_usage (group_id, model, prompt_tokens, completion_tokens) "
-        "VALUES (?, ?, ?, ?)",
-        (group_id, model, prompt_tokens, completion_tokens),
+        "INSERT INTO llm_token_usage "
+        "(group_id, model, prompt_tokens, completion_tokens, "
+        "cache_hit_tokens, cache_miss_tokens) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (group_id, model, prompt_tokens, completion_tokens,
+         cache_hit_tokens, cache_miss_tokens),
     )
     conn.commit()
 
@@ -280,11 +310,15 @@ def get_usage_today() -> dict:
     row = conn.execute(
         "SELECT COALESCE(SUM(prompt_tokens),0) AS p, "
         "COALESCE(SUM(completion_tokens),0) AS c, "
+        "COALESCE(SUM(cache_hit_tokens),0) AS ch, "
+        "COALESCE(SUM(cache_miss_tokens),0) AS cm, "
         "COUNT(*) AS n "
         "FROM llm_token_usage WHERE date(created_at)=?",
         (today,),
     ).fetchone()
-    return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+    return {"prompt": row["p"], "completion": row["c"],
+            "cache_hit": row["ch"], "cache_miss": row["cm"],
+            "calls": row["n"]}
 
 
 def get_usage_yesterday() -> dict:
@@ -295,11 +329,15 @@ def get_usage_yesterday() -> dict:
     row = conn.execute(
         "SELECT COALESCE(SUM(prompt_tokens),0) AS p, "
         "COALESCE(SUM(completion_tokens),0) AS c, "
+        "COALESCE(SUM(cache_hit_tokens),0) AS ch, "
+        "COALESCE(SUM(cache_miss_tokens),0) AS cm, "
         "COUNT(*) AS n "
         "FROM llm_token_usage WHERE date(created_at)=?",
         (yesterday,),
     ).fetchone()
-    return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+    return {"prompt": row["p"], "completion": row["c"],
+            "cache_hit": row["ch"], "cache_miss": row["cm"],
+            "calls": row["n"]}
 
 
 def get_usage_total() -> dict:
@@ -308,10 +346,14 @@ def get_usage_total() -> dict:
     row = conn.execute(
         "SELECT COALESCE(SUM(prompt_tokens),0) AS p, "
         "COALESCE(SUM(completion_tokens),0) AS c, "
+        "COALESCE(SUM(cache_hit_tokens),0) AS ch, "
+        "COALESCE(SUM(cache_miss_tokens),0) AS cm, "
         "COUNT(*) AS n "
         "FROM llm_token_usage"
     ).fetchone()
-    return {"prompt": row["p"], "completion": row["c"], "calls": row["n"]}
+    return {"prompt": row["p"], "completion": row["c"],
+            "cache_hit": row["ch"], "cache_miss": row["cm"],
+            "calls": row["n"]}
 
 
 # ─── 短期记忆持久化 ──────────────────────────────────

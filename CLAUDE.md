@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（112 个用例）
+├── tests/                 # pytest（126 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -274,6 +274,39 @@ v2.1.8 前是统一 `ORDER BY importance DESC LIMIT 40` —— 锁定条目一�
 写记忆的路径（`replace_memories` / `cleanup_memory` / `delete_memory_by_keyword`）**必须调 `_invalidate_cache()`**，
 否则 `_mem_cache` 会返回旧数据。
 
+### 前缀缓存（DeepSeek 自动上下文缓存）
+**system 消息的顺序是性能关键，不是随便排的。**
+
+DeepSeek 按**前缀**做自动上下文缓存，命中部分的计费远低于未命中。
+所以 `build_context()` 的 messages 必须满足：**固定内容在前、易变内容在后**。
+
+```
+[0] persona        固定（约 3000 字符）
+[1] 长期记忆块      基本固定（约 1500 字符）
+[2] 群号 + 当前时间  每轮都变   ← 前缀在这里才分叉
+[3+] 时间分隔符 + 短期记忆 + 当前消息
+```
+
+2026-10-26 实测（同一上下文连发两次）：
+
+| | prompt | cache_hit | 命中率 |
+|---|---|---|---|
+| 第 1 次 | 2873 | 1664 | 58% |
+| 第 2 次 | 2873 | 2688 | **94%** |
+
+第一次 58% 说明「只有 persona 被缓存」（旧顺序的结果）；
+重排后第二次冲到 94%，说明长期记忆块也进了缓存前缀。
+
+**改动 `build_context()` 时不许打乱这个顺序**，否则等于白白重算 1500 字符。
+新增 system 消息也要遵守：稳定的往前放，易变的往后放。
+
+**缓存统计**：`client.py` 会把 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`
+记进 `llm_token_usage.cache_hit_tokens / cache_miss_tokens`（旧库自动 `ALTER TABLE` 补列），
+`@Kei LLM` 会显示命中率。
+
+⚠️ **成本估算目前按全价算**（`config.llm_price_prompt`），有缓存命中时会**高估**约数倍。
+准确的算法需要再加一个「缓存命中单价」配置项，尚未做。
+
 ### 两条对话通道
 | 通道 | 规则 | 行为 |
 |---|---|---|
@@ -376,8 +409,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.3.2
-- **测试**：112 passed
+- **版本**：v2.4.0
+- **测试**：126 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

@@ -417,6 +417,21 @@ async def handle_kei_enable(event: GroupMessageEvent):
 #  LLM — 查询 Token 用量
 # ══════════════════════════════════════════════════════
 
+def _cache_rate_text(stat: dict) -> str:
+    """把汇总里的缓存命中数格式化成一行文案
+
+    分母用「命中 + 未命中」而不是 prompt_tokens：迁移前的旧记录没有缓存字段
+    （两列都是 0），用 prompt_tokens 当分母会把这些旧数据算成未命中，
+    命中率被无端拉低。分母为 0 时显示「无数据」，避免除零。
+    """
+    hit = stat.get("cache_hit", 0) or 0
+    miss = stat.get("cache_miss", 0) or 0
+    total = hit + miss
+    if total <= 0:
+        return "缓存命中 无数据"
+    return f"缓存命中 {hit} / {total}（{hit / total * 100:.0f}%）"
+
+
 @llm_usage_cmd.handle()
 async def handle_llm_usage(event: GroupMessageEvent):
     """查询今日 token 用量（仅 Sensei）"""
@@ -441,6 +456,7 @@ async def handle_llm_usage(event: GroupMessageEvent):
             f"  [今日] 调用 {today['calls']} 次"
             f" | {today['prompt'] + today['completion']:,} tokens"
             f" | ¥{_cost(today['prompt'], today['completion']):.2f}\n"
+            f"    {_cache_rate_text(today)}\n"
             f"  [昨日] 调用 {yesterday['calls']} 次"
             f" | {yesterday['prompt'] + yesterday['completion']:,} tokens"
             f" | ¥{_cost(yesterday['prompt'], yesterday['completion']):.2f}\n"

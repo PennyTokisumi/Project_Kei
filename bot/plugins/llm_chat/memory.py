@@ -123,19 +123,23 @@ class MemoryManager:
         ``images`` 是当前这条消息附带的图片 URL。有图时当前消息会发成
         OpenAI 多模态格式（text + image_url 片段），让模型真正看到图。
         历史消息里的图片不重发 —— QQ 图片 URL 有有效期，重复计费也没意义。
+
+        **顺序约定：固定内容必须排在变化内容之前，否则 DeepSeek 的前缀缓存会失效。**
+        DeepSeek 按前缀自动做上下文缓存，前缀越稳定、越长，实际计费越便宜。
+        因此 messages 的顺序是：
+
+        ``[0]`` persona（固定）→ ``[1]`` 长期记忆（基本固定）→
+        ``[2]`` 群号 + 当前时间（每轮都变）→ ``[3+]`` 时间分隔符 + 短期记忆 + 当前消息。
+
+        「群号 + 当前时间」每轮都会变，只要它排在长期记忆前面，缓存前缀就会
+        从它那里断开，后面那约 1500 字符的长期记忆块永远命中不了。新增 system
+        消息时也要遵守这条：稳定的往前放，易变的往后放。
         """
         prompt = PERSONA_PROMPT
         messages = [{"role": "system", "content": prompt}]
 
-        # 当前群标识 + 时间
-        from datetime import datetime, timezone, timedelta
-        _now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
-        messages.append({
-            "role": "system",
-            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。聊天记录按时间分组显示：── MM-DD HH:MM ── 是系统时间分隔符，冒号后是该时间段内的消息正文。带有（刚刚）标记的是当前最新消息。角色 assistant 的消息是你自己发出的。请以 Kei 的身份自然回复。"
-        })
-
-        # 长期记忆：锁定条目与可整理条目分开取，避免前者占满名额
+        # 长期记忆：锁定条目与可整理条目分开取，避免前者占满名额。
+        # 这一块内容基本固定，所以排在「群号 + 当前时间」之前 —— 见 docstring 的顺序约定。
         locked = get_locked_memories(limit=MEMORY_LOCKED_LIMIT)
         facts = get_fact_memories(limit=MEMORY_FACT_LIMIT)
         memories = locked + facts
@@ -145,6 +149,14 @@ class MemoryManager:
                 + "\n".join(f"· {m}" for m in memories)
             )
             messages.append({"role": "system", "content": mem_text})
+
+        # 当前群标识 + 时间（变化内容，必须排在固定内容之后）
+        from datetime import datetime, timezone, timedelta
+        _now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
+        messages.append({
+            "role": "system",
+            "content": f"你当前正在 QQ 群 {group_id} 中和大家聊天。现在的时间是 {_now}（北京时间）。聊天记录按时间分组显示：── MM-DD HH:MM ── 是系统时间分隔符，冒号后是该时间段内的消息正文。带有（刚刚）标记的是当前最新消息。角色 assistant 的消息是你自己发出的。请以 Kei 的身份自然回复。"
+        })
 
         # 短期记忆（按事件时间排序，含当前消息）
         short = list(_short_term.get(group_id, []))
