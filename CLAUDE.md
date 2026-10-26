@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（141 个用例）
+├── tests/                 # pytest（163 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -304,8 +304,31 @@ DeepSeek 按**前缀**做自动上下文缓存，命中部分的计费远低于�
 记进 `llm_token_usage.cache_hit_tokens / cache_miss_tokens`（旧库自动 `ALTER TABLE` 补列），
 `@Kei LLM` 会显示命中率。
 
-⚠️ **成本估算目前按全价算**（`config.llm_price_prompt`），有缓存命中时会**高估**约数倍。
-准确的算法需要再加一个「缓存命中单价」配置项，尚未做。
+### 费用估算（`llm_chat/pricing.py`）
+`@Kei LLM` 的花费**按每条记录逐条计价**，不能拿聚合 token 数乘单一单价 ——
+高峰/低谷差 2 倍、缓存命中比未命中便宜 **50 倍**，聚合后算会错得离谱。
+
+DeepSeek 官方价（2026-10，deepseek-flash，美元/百万 tokens）：
+
+| 项目 | 低谷 | 高峰 |
+|---|---|---|
+| 输入（缓存命中） | $0.003 | $0.006 |
+| 输入（缓存未命中） | $0.15 | $0.30 |
+| 输出 | $0.60 | $1.20 |
+
+**高峰**：UTC 周一至周五 `01:00-04:00`、`06:00-10:00`（北京时间 09-12、14-18）。
+其余时间（含周末）为低谷，价格是高峰的一半（`llm_price_offpeak_ratio`）。
+
+`config` 里填的是**高峰价**（元/百万，按汇率 7.1 折算）：
+`llm_price_prompt=2.13`（未命中）、`llm_price_cache_hit=0.043`、`llm_price_completion=8.52`。
+
+**已知误差（无法消除）**：
+- 中国法定节假日官方算低谷，我们判断不出来 → 那几天会高估 2 倍
+- 汇率写死，实际波动带来百分之几偏差
+- 官方保留调价权，改价要在 `.env` 里覆盖
+
+**旧数据**（迁移前没有缓存字段）两列都是 0，`row_cost()` 会兜底成全按未命中价算 ——
+那些记录产生时的真实情况确实就是全价。
 
 ### 两条对话通道
 | 通道 | 规则 | 行为 |
@@ -416,8 +439,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.5.0
-- **测试**：141 passed
+- **版本**：v2.5.1
+- **测试**：163 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

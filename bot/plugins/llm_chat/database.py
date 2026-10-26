@@ -356,6 +356,33 @@ def get_usage_total() -> dict:
             "calls": row["n"]}
 
 
+def get_usage_rows(period: str = "today") -> list:
+    """返回指定周期的**原始用量行**，供逐条计价使用
+
+    为什么不能只查聚合值：DeepSeek 高峰/低谷单价差 2 倍，
+    而「今日/昨日/累计」是跨时段的合计，必须拿到每条的 `created_at`
+    才能分别判断峰谷。`created_at` 由 SQLite 的 `CURRENT_TIMESTAMP`
+    写入，是 **UTC**。
+
+    period: "today" / "yesterday" / "total"
+    """
+    conn = _get_conn()
+    cols = ("prompt_tokens, completion_tokens, "
+            "cache_hit_tokens, cache_miss_tokens, created_at")
+    if period == "today":
+        sql = f"SELECT {cols} FROM llm_token_usage WHERE date(created_at)=?"
+        args = (time.strftime("%Y-%m-%d"),)
+    elif period == "yesterday":
+        import datetime as _dt
+        y = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+        sql = f"SELECT {cols} FROM llm_token_usage WHERE date(created_at)=?"
+        args = (y,)
+    else:
+        sql = f"SELECT {cols} FROM llm_token_usage"
+        args = ()
+    return conn.execute(sql, args).fetchall()
+
+
 # ─── 短期记忆持久化 ──────────────────────────────────
 
 

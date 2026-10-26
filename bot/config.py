@@ -43,9 +43,22 @@ class Config(BaseSettings):
     llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
 
     # LLM 计价（元 / 每百万 tokens），仅用于 @Kei LLM 指令的成本估算。
-    # 各供应商、各模型价格不同，需要时在 .env 里改（LLM_PRICE_PROMPT / LLM_PRICE_COMPLETION）
-    llm_price_prompt: float = Field(default=2.02, description="输入价格 元/百万 tokens")
-    llm_price_completion: float = Field(default=3.02, description="输出价格 元/百万 tokens")
+    #
+    # 以下默认值按 DeepSeek 官方价（2026-10 抓取，deepseek-flash）折算，汇率按 7.1：
+    #     输入(缓存未命中)  peak $0.30 → 2.13 元     off-peak $0.15 → 1.065 元
+    #     输入(缓存命中)    peak $0.006 → 0.043 元   off-peak $0.003 → 0.0215 元
+    #     输出              peak $1.20 → 8.52 元     off-peak $0.60 → 4.26 元
+    #
+    # **填的是高峰价**，低谷价由 llm_price_offpeak_ratio 折算（官方低谷恰为高峰一半）。
+    # 涨价 / 换模型 / 汇率变动时在 .env 里覆盖即可。
+    llm_price_prompt: float = Field(
+        default=2.13, description="输入价格（缓存未命中，高峰价）元/百万 tokens")
+    llm_price_cache_hit: float = Field(
+        default=0.043, description="输入价格（缓存命中，高峰价）元/百万 tokens")
+    llm_price_completion: float = Field(
+        default=8.52, description="输出价格（高峰价）元/百万 tokens")
+    llm_price_offpeak_ratio: float = Field(
+        default=0.5, description="低谷价相对高峰价的倍率（DeepSeek 低谷为高峰的一半）")
 
     # 人设自动学习（默认关闭）。人设现已固定在 llm_chat/persona.py，
     # 若打开，_learn_voice / _learn_from_voice 会把 [说话风格] / [性格特点]

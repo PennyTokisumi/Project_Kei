@@ -479,16 +479,17 @@ async def handle_llm_usage(event: GroupMessageEvent):
     if str(event.user_id) != SENSEI_QQ:
         await llm_usage_cmd.finish(Message(SENSEI_ONLY_MSG))
 
-    from .database import get_usage_yesterday, get_usage_total
+    from .database import get_usage_rows, get_usage_yesterday, get_usage_total
+    from .pricing import format_cost, total_cost
     today = get_usage_today()
     yesterday = get_usage_yesterday()
     total = get_usage_total()
-    # 单价来自 config（元/百万 tokens），在 .env 里可覆盖
-    price_prompt = config.llm_price_prompt
-    price_completion = config.llm_price_completion
 
-    def _cost(p, c):
-        return p / 1_000_000 * price_prompt + c / 1_000_000 * price_completion
+    # 成本按**每条记录**的时间分别计价：DeepSeek 高峰/低谷单价差 2 倍，
+    # 而缓存命中的输入价又只有未命中的 1/50，聚合值乘单一单价会错得离谱。
+    cost_today = total_cost(get_usage_rows("today"))
+    cost_yesterday = total_cost(get_usage_rows("yesterday"))
+    cost_total = total_cost(get_usage_rows("total"))
 
     await llm_usage_cmd.finish(
         Message(
@@ -496,14 +497,14 @@ async def handle_llm_usage(event: GroupMessageEvent):
             f"\n"
             f"  [今日] 调用 {today['calls']} 次"
             f" | {today['prompt'] + today['completion']:,} tokens"
-            f" | ¥{_cost(today['prompt'], today['completion']):.2f}\n"
+            f" | {format_cost(cost_today)}\n"
             f"    {_cache_rate_text(today)}\n"
             f"  [昨日] 调用 {yesterday['calls']} 次"
             f" | {yesterday['prompt'] + yesterday['completion']:,} tokens"
-            f" | ¥{_cost(yesterday['prompt'], yesterday['completion']):.2f}\n"
+            f" | {format_cost(cost_yesterday)}\n"
             f"  [累计] 调用 {total['calls']} 次"
             f" | {total['prompt'] + total['completion']:,} tokens"
-            f" | ¥{_cost(total['prompt'], total['completion']):.2f}"
+            f" | {format_cost(cost_total)}"
         ),
         at_sender=True,
     )
