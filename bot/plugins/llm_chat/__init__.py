@@ -8,6 +8,8 @@
 """
 
 import asyncio
+import random
+import re
 import time as _time
 
 from nonebot import get_driver, on_message
@@ -59,21 +61,59 @@ IDLE_TIMEOUT = 5.0  # 空闲超时：最后一条消息后 5s 无新消息 → �
 MAX_WAIT = 10.0      # 硬上限：第一条消息进入后 10s → 强制刷新
 MAX_BATCH = 10       # 数量上限：堆积 ≥ 10 条 → 立即刷新
 
-# 多段回复：模型用 [SEP] 主动断开，各段之间的发送间隔
-REPLY_SEGMENT_DELAY = 0.6
+# 多段回复：模型用 [SEP] 自己决定断开，各段之间的发送间隔
+# 间隔做随机化 —— 固定 0.6 秒看起来像程序定时器，随机 0.5~1.8 秒更像真人在敲字
+REPLY_SEGMENT_DELAY_MIN = 0.5
+REPLY_SEGMENT_DELAY_MAX = 1.8
+# 模型有时不用 [SEP]，而用空行来断句
+_BLANK_LINE_RE = re.compile(r"\n\s*\n+")
+# 段内残留的连续空行压成单个换行
+_INNER_BLANK_RE = re.compile(r"\n\s*\n+")
+# 封顶 3 条：再多就变成刷屏了
 MAX_REPLY_SEGMENTS = 3
 
 
-def _split_reply(reply: str) -> list[str]:
-    """把模型回复按 [SEP] 拆成多条消息
+def _segment_delay() -> float:
+    """两段回复之间的等待时间（随机，模拟打字节奏）"""
+    return random.uniform(REPLY_SEGMENT_DELAY_MIN, REPLY_SEGMENT_DELAY_MAX)
 
-    Kei 可以用 [SEP] 把一句话拆成两三条发出去（先吐槽再补一句）。
-    但模型很容易滥用，所以这里限制段数并丢掉空段 / [PASS]。
+
+def _split_reply(reply: str) -> list[str]:
+    """把模型回复拆成多条消息
+
+    Kei **自己决定**要不要分段（提示词里没有强制），所以这里只负责：
+    拆 → 去空段 → 去掉 [PASS] → 封顶 3 段。
+
+    两种分隔方式都认（实测模型会混用）：
+    1. `[SEP]` —— 提示词里教过的显式标记
+    2. **空行**（连续换行）—— 模型更自然会用这个来断句，不认的话就会变成
+       一条消息里夹一个大空隙，看起来像排版错误
+
+    封顶 3 段是为了防"一句话硬切成三段"的碎片化。
     """
     if not reply:
         return []
+
+    # 先按显式标记拆
     parts = [p.strip() for p in reply.split("[SEP]")]
     parts = [p for p in parts if p and p != "[PASS]"]
+
+    # 只有一段时，再看模型是不是用换行断的句
+    if len(parts) == 1:
+        text = parts[0]
+        if _BLANK_LINE_RE.search(text):
+            # 空行 = 明确的分段意图，直接拆（多了靠封顶截住）
+            cand = [p.strip() for p in _BLANK_LINE_RE.split(text) if p.strip()]
+        else:
+            # 单换行：只在 2~3 行时才拆。
+            # 超过 3 行说明模型在做分行排版，强行拆会把封顶之外的段落丢掉
+            lines = [p.strip() for p in text.splitlines() if p.strip()]
+            cand = lines if 2 <= len(lines) <= MAX_REPLY_SEGMENTS else []
+        if len(cand) >= 2:
+            parts = cand
+
+    # 段内残留的连续换行压成一个，避免单条消息里出现突兀的空行
+    parts = [_INNER_BLANK_RE.sub("\n", p) for p in parts]
     return parts[:MAX_REPLY_SEGMENTS]
 
 
@@ -156,7 +196,8 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
             "3. Sensei 对你说话\n"
             "注意：同一轮对话最多回复1条，别每句都接。\n"
             "消息带图片时图片内容已经一并给你了，可以自然聊到。\n"
-            "决定不回复 → [PASS]。想把回复拆成两三条发出去时用 [SEP] 分隔。"
+            "决定不回复 → [PASS]。可以自己判断要不要分成两三条发（用 [SEP] 隔开），"
+            "觉得一句话说完更自然就只说一条，最多 3 条。"
         )
     })
 
@@ -176,7 +217,7 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
         except Exception:
             pass
         if i < len(segments) - 1:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(_segment_delay())
 
     memory.mark_spoke(gid)
 
@@ -879,7 +920,7 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
         else:
             await llm_at_handler.send(Message(seg))
         if i < len(segments) - 1:
-            await asyncio.sleep(REPLY_SEGMENT_DELAY)
+            await asyncio.sleep(_segment_delay())
     await llm_at_handler.finish()
 
 

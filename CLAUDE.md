@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（126 个用例）
+├── tests/                 # pytest（141 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -316,9 +316,16 @@ DeepSeek 按**前缀**做自动上下文缓存，命中部分的计费远低于�
 缓冲区用**版本号防竞态**：每条新消息重建 task 并递增 `_buffer_version`，旧 task 检测到版本不符即自行退出。
 
 ### 回复分段与图片
-- **一问多答**：模型可用 `[SEP]` 主动把回复拆成 2–3 条短消息，`_split_reply()` 负责拆并限段数
-  (`MAX_REPLY_SEGMENTS = 3`)，各段间隔 `REPLY_SEGMENT_DELAY = 0.6s` 依次发出。
+- **分段由 Kei 自己决定**，提示词里**没有**强制分割（`persona.py` 有「要不要分段发」一节）。
+  `@Kei` 和自由聊天两条通道都启用，`_split_reply()` 只负责把文本拆对，**封顶 3 段**
+  （`MAX_REPLY_SEGMENTS = 3`，防止一句话被切成碎片）。
+- **三种分隔符都认**（实测模型会混用，只认 `[SEP]` 会漏掉一半情况）：
+  1. `[SEP]` —— 提示词里教过的显式标记
+  2. **空行** —— 模型最自然的断句方式；不认的话会变成「一条消息里夹一个大空隙」
+  3. **单换行** —— 仅在 2~3 行时拆；**超过 3 行不拆**（那是在做分行排版，强拆会丢掉封顶外的内容）
+- **段间隔随机** `_segment_delay()`：`0.5~1.8s`。固定 0.6s 看起来像程序定时器，随机更像真人敲字。
   第一条带 @，后续直接发。
+- 实测（2026-10-26，5 条不同类型提问）：2~3 次会自然分段，其余一条说完 —— 节奏接近真人。
 - **冷却不是丢弃**：`memory.cooldown_remaining()` 返回还差几秒，调用方 `await` 等它过去再答。
   早期版本直接 `return`，会造成「连问几句只答一次」甚至完全不理会。
 - **图片识别**：`extract_images()` 取最多 `MAX_IMAGES_PER_MESSAGE = 3` 张 QQ 图片 URL，
@@ -409,8 +416,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.4.0
-- **测试**：126 passed
+- **版本**：v2.5.0
+- **测试**：141 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
