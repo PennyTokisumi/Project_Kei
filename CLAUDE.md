@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（257 个用例）
+├── tests/                 # pytest（264 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -514,6 +514,10 @@ LLM_THINKING_EFFORT=low     # low / high / max
 
 > 注意 `startswith` 是**大小写敏感**的，`@Kei kei on` 不生效，必须 `KEI`。
 
+> **`help` 只列公开指令**；`balance` / `KEI` / `LLM` / `memory` 等 Sensei 专用指令只出现在
+> `sensei` 的隐藏清单里 —— 让普通群友看到他们用不了的指令体验很差。
+> 这条规则由 `tests/test_help_lists.py` 锁死，改权限时记得同步那个文件里的集合。
+
 ## 常用命令
 
 ```bash
@@ -547,8 +551,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.6.1
-- **测试**：257 passed
+- **版本**：v2.6.2
+- **测试**：264 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
