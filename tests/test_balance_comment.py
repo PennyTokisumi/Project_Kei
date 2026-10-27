@@ -19,8 +19,8 @@ NOW = datetime(2026, 10, 27, 20, 30, 0)
 # 与模块内保持一致的固定文案（被测试钉住，改动时应同步改测试）
 FACT_PREFIX = "【你刚注意到的变化】"
 FORMAT_RULE = (
-    "这一句是你在群里自己说的，不是回复谁。"
-    "只输出一句话，不超过 40 字，不要 @ 任何人，不要解释你在做什么。"
+    "这是你在群里自己说的话，不是回复谁。可以说一到三句短话，也可以分成两三条发出去"
+    "（用 [SEP] 隔开，最多 3 条）。不要 @ 任何人，不要解释你在做什么。"
 )
 STAGE_DIRECTIONS = {
     "topup": "（你合上账户页面，抬起头。）",
@@ -156,9 +156,9 @@ class TestKeiBalanceComment:
 
         text = _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID))
 
-        assert text == "原来到账了。"
+        assert text == ["原来到账了。"]
         assert len(calls) == 1
-        assert calls[0]["max_tokens"] == 120
+        assert calls[0]["max_tokens"] == 200
         assert calls[0]["temperature"] == pytest.approx(0.7)
         assert calls[0]["enable_thinking"] is False
         assert [m["role"] for m in calls[0]["messages"]] == ["system"] * 4 + ["user"]
@@ -170,7 +170,7 @@ class TestKeiBalanceComment:
         monkeypatch.setattr(config, "balance_kei_comment", False)
         _install_chat(monkeypatch, result={"content": "不该出现"}, calls=calls)
 
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == []
         assert calls == []
 
     def test_group_llm_disabled(self, monkeypatch):
@@ -183,7 +183,7 @@ class TestKeiBalanceComment:
         monkeypatch.setattr(config, "balance_kei_comment", True)
         _install_chat(monkeypatch, result={"content": "不该出现"}, calls=calls)
 
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == []
         assert calls == []
 
     def test_group_id_defaults_to_alert_group(self, monkeypatch, llm_on):
@@ -191,7 +191,7 @@ class TestKeiBalanceComment:
         monkeypatch.setattr(config, "balance_alert_group_id", GROUP_ID)
         _install_chat(monkeypatch, result={"content": "原来到账了。"})
 
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == "原来到账了。"
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == ["原来到账了。"]
 
     def test_default_group_without_llm(self, monkeypatch, llm_on):
         """缺省群就是播报群；它没 KEI ON 时同样不说话"""
@@ -199,13 +199,13 @@ class TestKeiBalanceComment:
         monkeypatch.setattr(config, "balance_alert_group_id", 999999)
         _install_chat(monkeypatch, result={"content": "不该出现"}, calls=calls)
 
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == []
         assert calls == []
 
     def test_pass_returns_empty(self, monkeypatch, llm_on):
         """模型判断此刻不该说话 → [PASS] 不上屏"""
         _install_chat(monkeypatch, result={"content": "[PASS]"})
-        assert _run(bc.kei_balance_comment("low", 0.0, 3.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("low", 0.0, 3.0, GROUP_ID)) == []
 
     def test_quotes_are_stripped(self, monkeypatch, llm_on):
         """模型爱把台词包在引号里，成对出现就剥掉"""
@@ -215,7 +215,7 @@ class TestKeiBalanceComment:
             ('"原来到账了。"', "原来到账了。"),
         ):
             _install_chat(monkeypatch, result={"content": raw})
-            assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == expected
+            assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == [expected]
 
     def test_at_prefix_is_stripped(self, monkeypatch, llm_on):
         """模型模仿群聊格式去 @ 人 → 去掉 @ 前缀（不能吞掉正文）"""
@@ -226,12 +226,12 @@ class TestKeiBalanceComment:
             ("@老师原来到账了", "老师原来到账了"),
         ):
             _install_chat(monkeypatch, result={"content": raw})
-            assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == expected
+            assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == [expected]
 
     def test_exception_returns_empty(self, monkeypatch, llm_on):
         """LLM 抛异常也不能冒泡，否则会打断播报主流程"""
         _install_chat(monkeypatch, exc=RuntimeError("网络炸了"))
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == []
 
     def test_timeout_returns_empty(self, monkeypatch, llm_on):
         """超过 15 秒（测试里缩短）就放弃，返回空串"""
@@ -242,30 +242,63 @@ class TestKeiBalanceComment:
             return {"content": "太迟了"}
 
         monkeypatch.setattr(bc.llm_client, "chat", slow_chat)
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == []
 
     def test_long_output_is_truncated(self, monkeypatch, llm_on):
-        """超过 60 字截断到 60 字"""
-        _install_chat(monkeypatch, result={"content": "啊" * 100})
-        text = _run(bc.kei_balance_comment("grant", 20.0, 35.0, GROUP_ID))
-        assert text == "啊" * 60
-        assert len(text) == 60
+        """单段超过 80 字截断到 80 字（允许两三句，所以上限比早先的 60 宽松）"""
+        _install_chat(monkeypatch, result={"content": "啊" * 200})
+        segments = _run(bc.kei_balance_comment("grant", 20.0, 35.0, GROUP_ID))
+        assert segments == ["啊" * 80]
+        assert len(segments[0]) == 80
 
     def test_blank_or_missing_content(self, monkeypatch, llm_on):
         """空 / 纯空白 / 缺 content 字段都当作不说话"""
         for result in ({"content": ""}, {"content": "   \n\t "}, {}, {"content": None}):
             _install_chat(monkeypatch, result=result)
-            assert _run(bc.kei_balance_comment("grant", 20.0, 35.0, GROUP_ID)) == ""
+            assert _run(bc.kei_balance_comment("grant", 20.0, 35.0, GROUP_ID)) == []
 
     def test_llm_error_dict(self, monkeypatch, llm_on):
         """供应商未配置 / 请求失败时 client 返回 error + 空 content → 空串"""
         _install_chat(monkeypatch, result={"content": "", "error": "API Key 未配置"})
-        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("topup", 10.0, 15.0, GROUP_ID)) == []
 
     def test_unknown_kind(self, monkeypatch, llm_on):
         """未知事件类型直接返回空串，不浪费一次请求"""
         calls = []
         _install_chat(monkeypatch, result={"content": "不该出现"}, calls=calls)
 
-        assert _run(bc.kei_balance_comment("refund", 1.0, 2.0, GROUP_ID)) == ""
+        assert _run(bc.kei_balance_comment("refund", 1.0, 2.0, GROUP_ID)) == []
         assert calls == []
+
+class TestSegments:
+    """她可以像正常聊天那样把话分成两三条发出去
+
+    复用聊天通道的 _split_reply：认 [SEP]、空行、单换行（≤3 行），封顶 3 段。
+    """
+
+    def test_sep_two_segments(self, monkeypatch, llm_on):
+        _install_chat(monkeypatch, result={"content": "诶？多了钱……[SEP]是老师充的吗……谢谢"})
+        segs = _run(bc.kei_balance_comment("topup", 100.0, 133.0, GROUP_ID))
+        assert segs == ["诶？多了钱……", "是老师充的吗……谢谢"]
+
+    def test_blank_line_two_segments(self, monkeypatch, llm_on):
+        """模型常用空行断句，不认的话会变成一条消息里夹大空隙"""
+        _install_chat(monkeypatch, result={"content": "诶？多了钱……\n\n是老师充的吗"})
+        segs = _run(bc.kei_balance_comment("topup", 100.0, 133.0, GROUP_ID))
+        assert segs == ["诶？多了钱……", "是老师充的吗"]
+
+    def test_single_message_stays_one(self, monkeypatch, llm_on):
+        """两句话写在一条里也可以，不该被硬拆"""
+        raw = "DeepSeek 官方突然送了 50 块额度……老师知道这件事吗？梁文锋先生还挺大方的。"
+        _install_chat(monkeypatch, result={"content": raw})
+        assert _run(bc.kei_balance_comment("grant", 50.0, 183.0, GROUP_ID)) == [raw]
+
+    def test_capped_at_three(self, monkeypatch, llm_on):
+        _install_chat(monkeypatch, result={"content": "一[SEP]二[SEP]三[SEP]四"})
+        segs = _run(bc.kei_balance_comment("topup", 10.0, 20.0, GROUP_ID))
+        assert len(segs) == 3
+        assert segs == ["一", "二", "三"]
+
+    def test_empty_segments_dropped(self, monkeypatch, llm_on):
+        _install_chat(monkeypatch, result={"content": "诶？[SEP]   [SEP]谢谢"})
+        assert _run(bc.kei_balance_comment("topup", 10.0, 20.0, GROUP_ID)) == ["诶？", "谢谢"]

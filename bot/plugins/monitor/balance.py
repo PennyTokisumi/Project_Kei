@@ -13,7 +13,7 @@
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Union
 
 import httpx
 from nonebot import logger as nb_logger
@@ -42,12 +42,15 @@ CHANGE_EPSILON = 0.01
 
 # 多条播报之间的间隔（秒），避免 QQ 端看起来像刷屏
 ALERT_GAP_SECONDS = 1.0
+# Kei 旁白分条发送时的间隔（秒），比固定播报稍长，像在打字
+COMMENT_GAP_SECONDS = 1.5
 
 # 历史快照保留天数（只为「跨重启对比增量」和排查问题，不需要永久保留）
 KEEP_DAYS = 90
 
 # comment_fn(kind, amount, balance) -> 非空文本时单独发一条
-CommentFn = Callable[[str, float, float], Awaitable[Optional[str]]]
+# 返回单条字符串或多条列表都行；列表用于「她自己也分成两三句说」的场合
+CommentFn = Callable[[str, float, float], Awaitable[Optional[Union[str, list[str]]]]]
 
 
 @dataclass(frozen=True)
@@ -344,6 +347,10 @@ async def _maybe_send_comment(bot, comment_fn: Optional[CommentFn], kind: str,
                               amount: float, balance: float) -> None:
     """让 Kei 跟一句点评（单独一条、不带 @）
 
+    ``comment_fn`` 可以返回**字符串或字符串列表** —— 她可以像正常聊天那样
+    把话分成两三条发出去（「诶？多了钱……」「是老师充的吗……」），
+    这里逐条发送并留间隔，看起来像真的在打字。
+
     失败只记日志：点评是锦上添花，不能影响固定播报。
     """
     if comment_fn is None or not config.balance_kei_comment:
@@ -355,16 +362,28 @@ async def _maybe_send_comment(bot, comment_fn: Optional[CommentFn], kind: str,
         nb_logger.warning(f"余额点评生成失败 [{kind}]: {type(e).__name__}: {e}")
         return
 
+    # 兼容两种返回：单条字符串 / 多条列表
     if not comment:
         return
+    if isinstance(comment, str):
+        segments = [comment]
+    else:
+        segments = [str(s) for s in comment if s]
+    if not segments:
+        return
 
-    try:
-        await bot.send_group_msg(
-            group_id=config.balance_alert_group_id,
-            message=Message([MessageSegment.text(str(comment))]),
-        )
-    except Exception as e:
-        nb_logger.error(f"余额点评发送失败 [{kind}]: {e}")
+    for index, segment in enumerate(segments):
+        try:
+            await bot.send_group_msg(
+                group_id=config.balance_alert_group_id,
+                message=Message([MessageSegment.text(segment)]),
+            )
+        except Exception as e:
+            nb_logger.error(f"余额点评发送失败 [{kind}]: {e}")
+            return
+        # 多条之间留一点间隔，模拟打字节奏
+        if index < len(segments) - 1:
+            await asyncio.sleep(COMMENT_GAP_SECONDS)
 
 
 async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:

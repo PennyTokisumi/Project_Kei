@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（250 个用例）
+├── tests/                 # pytest（257 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -420,7 +420,7 @@ LLM_THINKING_EFFORT=low     # low / high / max
 [0] persona      原样（命中前缀缓存）
 [1] 环境块       群号 + 时间
 [2] 事实块       【你刚注意到的变化】充值额度多了 ¥100.00，总余额 ¥133.23。
-[3] 格式约束     只输出一句话，不超过 40 字，不要 @ 任何人
+[3] 格式约束     可以说一到三句，也可以分成两三条发（[SEP]，最多 3 条）
 [4] 舞台指示     （你合上账户页面，抬起头。）
 ```
 
@@ -431,6 +431,11 @@ LLM_THINKING_EFFORT=low     # low / high / max
 实测她约 2/3 的概率自然提到他，剩下 1/3 不提——反而更像真人。
 
 旁白**不写进短期记忆**：每 30 分钟的播报会挤占 `deque(10)`，把真正的对话挤掉。
+
+**旁白可以分多条发**：`kei_balance_comment()` 返回 `list[str]`（1~3 条），
+分段直接复用聊天通道的 `_split_reply()` —— 认 `[SEP]`、空行、≤3 行的单换行，封顶 3 段。
+`_maybe_send_comment()` 逐条发送，中间隔 `COMMENT_GAP_SECONDS`（1.5s），看起来像在打字。
+它同时兼容返回单条字符串（老签名），不会因为改动而炸。
 
 ### 两条对话通道
 | 通道 | 规则 | 行为 |
@@ -542,8 +547,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.6.0
-- **测试**：250 passed
+- **版本**：v2.6.1
+- **测试**：257 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

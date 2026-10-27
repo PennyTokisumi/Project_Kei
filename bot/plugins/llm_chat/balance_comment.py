@@ -44,19 +44,24 @@ _STAGE_DIRECTIONS = {
 # 事实块前缀：把事件写成「她自己注意到的变化」，而不是「通知/请求」
 _FACT_PREFIX = "【你刚注意到的变化】"
 
-# 格式约束：三个场景通用。只约束形状，不干涉内容
+# 格式约束：三个场景通用。只约束形状，不干涉内容。
+# 允许 1~3 句、允许像真人打字那样分成两三条发 —— 和聊天通道的分段逻辑是同一套
+# （persona 里本来就有「要不要分段发」一节，这里只是不禁止它）。
 _FORMAT_RULE = (
-    "这一句是你在群里自己说的，不是回复谁。"
-    "只输出一句话，不超过 40 字，不要 @ 任何人，不要解释你在做什么。"
+    "这是你在群里自己说的话，不是回复谁。可以说一到三句短话，也可以分成两三条发出去"
+    "（用 [SEP] 隔开，最多 3 条）。不要 @ 任何人，不要解释你在做什么。"
 )
 
 # 调用的硬性上限，与话题描述一致
 _LLM_TIMEOUT = 15.0
-_MAX_TOKENS = 120
+# 允许两三句，token 上限相应放宽
+_MAX_TOKENS = 200
 _TEMPERATURE = 0.7
 
-# 代码侧兜底：模型偶尔会无视 40 字约束，超过这个长度就截断
-_MAX_CHARS = 60
+# 代码侧兜底：模型偶尔会无视约束，单段超过这个长度就截断
+_MAX_CHARS = 80
+# 最多发几条（与聊天通道一致）
+_MAX_SEGMENTS = 3
 
 # 模型判断「此刻不该说话」时返回的标记
 _PASS_TOKEN = "[PASS]"
@@ -205,6 +210,29 @@ def _clean_reply(text: str) -> str:
     return out
 
 
+def _split_and_clean(text: str) -> list[str]:
+    """把模型输出拆成 1~3 条，并逐条清洗
+
+    直接复用聊天通道的 ``_split_reply`` —— 它已经处理了三种分隔：
+    ``[SEP]``、空行、单换行（超过 3 行时不拆，避免把排版当分段），并封顶 3 段。
+    这样余额旁白的分段行为和正常聊天完全一致，用户不会觉得两套逻辑。
+    """
+    if not text:
+        return []
+    try:
+        from . import _split_reply  # 同包内的聊天分段函数，懒导入避免循环
+        raw = _split_reply(str(text))
+    except Exception:
+        raw = [str(text)]
+
+    segments = []
+    for seg in raw:
+        cleaned = _clean_reply(seg)
+        if cleaned:
+            segments.append(cleaned)
+    return segments[:_MAX_SEGMENTS]
+
+
 def _llm_enabled(group_id: int) -> bool:
     """该群是否已开启 LLM（沿用项目里 ``llm_enabled_{group_id}`` 这一套设置）"""
     return get_setting(f"llm_enabled_{group_id}", "0") == "1"
@@ -214,22 +242,25 @@ def _llm_enabled(group_id: int) -> bool:
 
 
 async def kei_balance_comment(kind: str, amount: float, balance: float,
-                              group_id: Optional[int] = None) -> str:
-    """生成 Kei 的一句话。**任何情况下都不抛异常**，不该说话时返回空串 ""。
+                              group_id: Optional[int] = None) -> list[str]:
+    """生成 Kei 的旁白，返回 **1~3 条**待发送的消息；不该说话时返回空列表 ``[]``。
+
+    之所以返回列表而不是单个字符串：她可以像正常聊天那样把话分成两三条发出去
+    （「诶？多了钱……[SEP]是老师充的吗……谢谢」），播报器会逐条发送、中间留间隔。
 
     ``group_id`` 缺省时取 ``config.balance_alert_group_id`` —— 播报器
     （``monitor/balance.py`` 的 ``comment_fn``）只按 ``(kind, amount, balance)``
     三个参数调用，而播报本来就固定发到那一个群，用同一个群判断 KEI ON 才对。
 
-    返回空串的情况：
+    返回空列表的情况：
     - ``config.balance_kei_comment`` 为假
     - 该群未开启 LLM（``llm_enabled`` 为假）
     - LLM 未配置 / 调用失败 / 超时（15 秒）
     - 模型返回空、``[PASS]``、或只有空白
     - ``kind`` 不是 topup / grant / low 之一
 
-    返回的字符串已经清洗过：去首尾空白、去掉可能出现的 @ 前缀、去掉包裹的引号、
-    长度超过 60 字则截断（并打一条 debug 日志）。
+    每条都已清洗：去首尾空白、去掉可能出现的 @ 前缀、去掉包裹的引号，
+    单段超过 80 字则截断（并打一条 debug 日志）。
     """
     try:
         if group_id is None:
@@ -237,15 +268,15 @@ async def kei_balance_comment(kind: str, amount: float, balance: float,
 
         if not config.balance_kei_comment:
             nb_logger.debug("Kei 余额评论：配置已关闭，跳过")
-            return ""
+            return []
 
         if kind not in _FACT_KINDS:
             nb_logger.debug(f"Kei 余额评论：未知事件类型 {kind!r}，跳过")
-            return ""
+            return []
 
         if not _llm_enabled(group_id):
             nb_logger.debug(f"Kei 余额评论：群 {group_id} 未开启 LLM，跳过")
-            return ""
+            return []
 
         messages = build_messages(kind, amount, balance, group_id)
 
@@ -261,25 +292,26 @@ async def kei_balance_comment(kind: str, amount: float, balance: float,
             )
         except asyncio.TimeoutError:
             nb_logger.warning(f"Kei 余额评论生成超时（{_LLM_TIMEOUT:.0f}s），跳过")
-            return ""
+            return []
 
         if not isinstance(result, dict):
             nb_logger.warning(f"Kei 余额评论：LLM 返回格式异常（{type(result)!r}），跳过")
-            return ""
+            return []
 
-        text = _clean_reply(result.get("content") or "")
-        if not text:
+        raw_text = result.get("content") or ""
+        segments = _split_and_clean(raw_text)
+        if not segments:
             # 供应商未配置 / 请求失败时 client 会带回 error，把原因记进日志
             error = result.get("error")
             if error:
                 nb_logger.warning(f"Kei 余额评论生成失败：{error}")
             else:
                 nb_logger.debug("Kei 余额评论：模型没有给出可用内容（空 / [PASS]），跳过")
-            return ""
+            return []
 
-        nb_logger.info(f"Kei 余额评论（{kind}）：{text}")
-        return text
+        nb_logger.info(f"Kei 余额评论（{kind}，{len(segments)} 段）：{segments}")
+        return segments
     except Exception as e:
         # 兜底：这句话只是锦上添花，绝对不能影响播报主流程
         nb_logger.warning(f"Kei 余额评论生成异常（已忽略）：{e}")
-        return ""
+        return []

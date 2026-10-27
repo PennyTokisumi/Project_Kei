@@ -583,6 +583,62 @@ class TestPollBalance:
         assert bot.sent[1][1].plain_text == "老师，钱到账了哦。"
 
     @pytest.mark.asyncio
+    async def test_comment_can_be_multiple_messages(self, monkeypatch, fake_messaging):
+        """comment_fn 返回列表时逐条发送（她可以像聊天那样分两三句说）"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", True)
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        # 测试里别真等 1.5 秒
+        monkeypatch.setattr(balance_mod, "COMMENT_GAP_SECONDS", 0)
+
+        save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
+        reset_state_for_tests()
+
+        async def fake_fetch():
+            return snap(total=150.0, granted=0.0, topped_up=150.0)
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        async def comment_fn(kind, amount, balance):
+            return ["诶？多了钱……", "是老师充的吗……谢谢"]
+
+        bot = _FakeBot()
+        await poll_balance(bot, comment_fn=comment_fn)
+
+        # 1 条固定播报 + 2 条旁白
+        assert len(bot.sent) == 3
+        assert bot.sent[0][1][0].type == "at"
+        assert bot.sent[1][1].plain_text == "诶？多了钱……"
+        assert bot.sent[2][1].plain_text == "是老师充的吗……谢谢"
+        # 旁白都不带 @
+        assert bot.sent[1][1][0].type == "text"
+        assert bot.sent[2][1][0].type == "text"
+
+    @pytest.mark.asyncio
+    async def test_comment_empty_list_sends_nothing(self, monkeypatch, fake_messaging):
+        """返回空列表 = 这次不说话"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", True)
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+
+        save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
+        reset_state_for_tests()
+
+        async def fake_fetch():
+            return snap(total=150.0, granted=0.0, topped_up=150.0)
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        async def comment_fn(kind, amount, balance):
+            return []
+
+        bot = _FakeBot()
+        await poll_balance(bot, comment_fn=comment_fn)
+
+        assert len(bot.sent) == 1     # 只有固定播报
+        assert bot.sent[0][1][0].type == "at"
+
+    @pytest.mark.asyncio
     async def test_comment_switch_off(self, monkeypatch, fake_messaging):
         """config.balance_kei_comment 为假 → 不调用 comment_fn"""
         monkeypatch.setattr(config, "balance_alert_enabled", True)
