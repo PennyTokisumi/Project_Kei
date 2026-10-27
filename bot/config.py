@@ -84,6 +84,28 @@ class Config(BaseSettings):
     llm_price_offpeak_ratio: float = Field(
         default=0.5, description="低谷价相对高峰价的倍率（DeepSeek 低谷为高峰的一半）")
 
+    # ─── DeepSeek 余额播报 ────────────────────────────────
+    #
+    # 官方只有一个读接口 GET /user/balance，没有 webhook / 订阅 / 事件流，
+    # 所以「充值」「赠送额度」**只能靠轮询发现**（消耗不用轮询：每次调用的 usage
+    # 里就有精确 token 数，已经记在 llm_token_usage）。
+    #
+    # 不过该接口没有"每日次数"限制（官方只写了并发限制），所以等充值时
+    # 可以把间隔压到 60 秒，几乎无额外代价。
+    balance_alert_enabled: bool = Field(
+        default=True, description="是否启用 DeepSeek 余额播报")
+    balance_alert_group_id: int = Field(
+        default=1031343674,
+        description="播报发到哪个群（当前是测试群，测完改成正式群即可）")
+    balance_poll_interval: int = Field(
+        default=1800, description="正常轮询间隔（秒），默认 30 分钟")
+    balance_wait_poll_interval: int = Field(
+        default=60, description="余额低于阈值、等待充值时的加密轮询间隔（秒）")
+    balance_low_threshold: float = Field(
+        default=10.0, description="低余额阈值（元）。跌破提醒一次，回到阈值以上后重新武装")
+    balance_kei_comment: bool = Field(
+        default=True, description="播报后是否让 Kei 再跟一句（需该群已 KEI ON）")
+
     # 人设自动学习（默认关闭）。人设现已固定在 llm_chat/persona.py，
     # 若打开，_learn_voice / _learn_from_voice 会把 [说话风格] / [性格特点]
     # 这类条目重新写进 llm_memory，与 persona.py 形成两个真源。

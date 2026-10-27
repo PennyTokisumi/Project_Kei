@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（185 个用例）
+├── tests/                 # pytest（250 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -367,6 +367,71 @@ LLM_THINKING_EFFORT=low     # low / high / max
 ⚠️ **想要温度生效就不能开 thinking**。反过来，开了 thinking 之后调温度不会有任何效果 ——
 如果发现"改了温度没变化"，先检查 `LLM_ENABLE_THINKING`。
 
+### DeepSeek 余额播报（`monitor/balance.py`）
+官方只有一个读接口 `GET /user/balance`，**没有 webhook / 订阅 / 事件流**，
+所以「充值到账」「赠送额度」只能靠**轮询对比前后两次快照**发现。
+（「消耗」不需要轮询：每次 LLM 调用的 `usage` 里就有精确 token 数，已记在 `llm_token_usage`。）
+
+#### 三种事件
+
+| 事件 | 判定 |
+|---|---|
+| 充值 | `topped_up_balance` 上升 > 0.01 |
+| 赠送额度 | `granted_balance` 上升 > 0.01 |
+| 余额不足 | `total_balance` 跌破 `BALANCE_LOW_THRESHOLD`，或 `is_available=false` |
+
+⚠️ **不能用 `total` 下降判断充值** —— 消耗也会让 total 下降，`topped_up` 同样会减少。
+只有 `topped_up` **上升**才是真的到账。
+
+#### 两个容易写错的地方
+
+**① 首次启动不能报「变化」**
+没有基线时，把当前余额当成「刚充值了 33.23」是最典型的误报。
+`detect_events(prev=None, ...)` 明确不产生 TOPUP/GRANT；但余额本身就低于阈值时**照报**。
+
+**② 低余额必须迟滞**
+`_low_armed`：跌破只报一次，回到阈值以上后重新武装。
+否则每轮轮询都会重复「余额不足」，变成刷屏。
+重启时按 DB 里最后一条快照推导：上次就已经低于阈值 ⇒ 视为已提醒过，不再重复。
+
+#### 双间隔（心跳 + 门控）
+
+调度器**每 60 秒心跳一次**，但真正打接口的频率由 `needs_fast_poll()` 决定：
+
+| 状态 | 间隔 |
+|---|---|
+| 正常 | `BALANCE_POLL_INTERVAL`（1800s） |
+| 余额 < 阈值（等充值） | `BALANCE_WAIT_POLL_INTERVAL`（60s） |
+| 接口连续失败 | 不做特殊退避，只记 warning，下轮再试 |
+
+心跳固定、间隔靠门控，好处是**状态切换不用重新注册任务**。
+官方该接口没有「每日次数」限制（只有并发限制），60 秒完全安全。
+
+#### 播报 = 固定文本 + 可选旁白
+
+```
+@老师 DeepSeek 账户已到账 ¥100.00，当前余额 ¥133.23。      ← 固定文本（含 @）
+（盯着屏幕愣了一下）诶？账户里怎么突然多了一百块……          ← Kei 旁白（仅 KEI ON 时）
+```
+
+旁白由 `llm_chat/balance_comment.py` 生成，**只给事实和视角，不给情绪指令**：
+
+```
+[0] persona      原样（命中前缀缓存）
+[1] 环境块       群号 + 时间
+[2] 事实块       【你刚注意到的变化】充值额度多了 ¥100.00，总余额 ¥133.23。
+[3] 格式约束     只输出一句话，不超过 40 字，不要 @ 任何人
+[4] 舞台指示     （你合上账户页面，抬起头。）
+```
+
+**为什么不能写「感谢他，但嘴硬」**：模型会把指令逐条兑现，产出像客服话术。
+只给事实时，情绪由 `persona.py` 自然长出。这条经验对以后所有「系统触发的旁白」都适用。
+
+「梁文锋」也只作为**事实**写进赠送事件的事实块（`DeepSeek 的创始人是梁文锋`），
+实测她约 2/3 的概率自然提到他，剩下 1/3 不提——反而更像真人。
+
+旁白**不写进短期记忆**：每 30 分钟的播报会挤占 `deque(10)`，把真正的对话挤掉。
+
 ### 两条对话通道
 | 通道 | 规则 | 行为 |
 |---|---|---|
@@ -411,6 +476,7 @@ LLM_THINKING_EFFORT=low     # low / high / max
 | P | 指令 | 权限 | 说明 |
 |---|---|---|---|
 | 3 | `status` | 所有人 | 版本/目标数/运行时长 |
+| 3 | `balance` | **Sensei** | 查 DeepSeek 账户余额（直接打官方接口，不等轮询） |
 | 3 | `claude <任务>` | Sensei | 经 Kei 转述问 Claude CLI（需 `KEI ON`） |
 | 3 | `remind <时间> <内容>` | 所有人 | 一次性定时消息 |
 | 3 | `daily <HHMM> <内容>` / `daily off` | 所有人 | 每群每日公告 |
@@ -476,8 +542,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.5.2
-- **测试**：185 passed
+- **版本**：v2.6.0
+- **测试**：250 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

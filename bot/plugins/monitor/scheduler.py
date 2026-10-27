@@ -286,6 +286,92 @@ async def _backfill_names():
             pass
 
 
+# ─── DeepSeek 余额播报 ──────────────────────────────────────
+#
+# 官方只有一个读接口 GET /user/balance，没有 webhook / 订阅 / 事件流，
+# 所以「充值」「赠送额度」只能靠轮询。消耗不用轮询（每次调用的 usage 就有）。
+#
+# 心跳固定 60 秒，真正决定「这轮要不要打接口」的是 _balance_tick 里的间隔判断 ——
+# 这样「正常 30 分钟 / 等待充值 60 秒」的切换不需要重新注册任务。
+
+BALANCE_TICK_SECONDS = 60
+
+_balance_last_poll: float = 0.0
+
+
+def _balance_current_interval() -> int:
+    """按当前状态决定轮询间隔（秒）"""
+    try:
+        from .balance import needs_fast_poll
+        if needs_fast_poll():
+            return config.balance_wait_poll_interval
+    except Exception:
+        pass
+    return config.balance_poll_interval
+
+
+async def _balance_tick():
+    """60 秒心跳：够了才真去打 /user/balance"""
+    global _balance_last_poll
+    if not config.balance_alert_enabled:
+        return
+
+    now = _time_module.time()
+    if now - _balance_last_poll < _balance_current_interval():
+        return
+    _balance_last_poll = now
+
+    try:
+        from .balance import poll_balance
+    except Exception as e:
+        nb_logger.warning(f"余额模块加载失败: {e!r}")
+        return
+
+    # Kei 的跟话是可选依赖：llm_chat 没加载、或配置关闭时只发固定文本
+    comment_fn = None
+    if config.balance_kei_comment:
+        try:
+            from ..llm_chat.balance_comment import kei_balance_comment
+            comment_fn = kei_balance_comment
+        except Exception as e:
+            nb_logger.debug(f"Kei 跟话不可用: {e!r}")
+
+    try:
+        bot = get_bot()
+    except Exception:
+        nb_logger.debug("暂无已连接的 bot，跳过本轮余额检查")
+        return
+
+    try:
+        await poll_balance(bot, comment_fn=comment_fn)
+    except Exception as e:
+        nb_logger.warning(f"余额轮询异常: {e!r}")
+
+
+def _register_balance_job():
+    """把余额心跳注册到共享调度器上"""
+    if not config.balance_alert_enabled:
+        nb_logger.info("余额播报已关闭（BALANCE_ALERT_ENABLED=false），不注册轮询")
+        return
+    scheduler.add_job(
+        _balance_tick,
+        "interval",
+        seconds=BALANCE_TICK_SECONDS,
+        id="balance_poll",
+        next_run_time=datetime.now() + timedelta(seconds=BALANCE_TICK_SECONDS),
+        replace_existing=True,
+        misfire_grace_time=30,
+        max_instances=1,
+        coalesce=True,
+    )
+    nb_logger.info(
+        f"注册余额轮询：心跳 {BALANCE_TICK_SECONDS}s，"
+        f"正常间隔 {config.balance_poll_interval}s，"
+        f"等待充值 {config.balance_wait_poll_interval}s，"
+        f"播报群 {config.balance_alert_group_id}"
+    )
+
+
 async def start():
     """启动调度器：初始化 DB → 清理 → 加载所有目标 → 注册定时任务"""
     init_db()
@@ -311,6 +397,9 @@ async def start():
         nb_logger.info(
             f"Pixiv 订阅 {pixiv_count} 个 → 轮询间隔 {pixiv_interval_for(pixiv_count)}s"
         )
+
+    # DeepSeek 余额播报：和监测目标共用同一个调度器
+    _register_balance_job()
 
     for t in targets:
         source = _make_source(t)
@@ -344,7 +433,7 @@ async def start():
             f"抖动 {jitter_for(source)}s 首轮 {first_run:%H:%M:%S}"
         )
 
-    if targets:
+    if targets or config.balance_alert_enabled:
         scheduler.start()
         nb_logger.info(f"调度器已启动，共 {len(targets)} 个监测目标")
     else:

@@ -9,7 +9,7 @@ from nonebot.adapters.onebot.v11 import (
 )
 from nonebot.rule import to_me, startswith
 
-from config import config, VERSION
+from config import config, VERSION, SENSEI_QQ
 from ..monitor.database import (
     add_target, remove_target, list_targets,
     get_setting, set_setting, update_target_name,
@@ -32,6 +32,8 @@ PLATFORM_SHORT_NAMES = {
 
 # ─── 命令规则：@机器人 + 命令前缀 ─────────────────────────────
 status_cmd = on_message(rule=to_me() & startswith("status"), priority=3)
+# 余额查询：仅 Sensei，直接打一次官方接口拿真实值（用于刚充完钱懒得等轮询的场景）
+balance_cmd = on_message(rule=to_me() & startswith("balance"), priority=3)
 add_cmd = on_message(rule=to_me() & startswith("add"), priority=5)
 list_cmd = on_message(rule=to_me() & startswith("list"), priority=5)
 # Pixiv 订阅单独一条命令：订阅数可能上百，不能和 list 混在一起
@@ -463,6 +465,50 @@ async def handle_status(event: GroupMessageEvent):
     )
 
 
+@balance_cmd.handle()
+async def handle_balance(event: GroupMessageEvent):
+    """查看 DeepSeek 账户余额（仅 Sensei）
+
+    这里**直接打官方接口**，不读本地快照 —— 刚充完钱懒得等下一次轮询时用。
+    """
+    if str(event.user_id) != SENSEI_QQ:
+        await balance_cmd.finish(
+            Message("\n这个只有老师能看。"),
+            at_sender=True,
+        )
+
+    # 延迟导入：monitor.balance 会在导入时读 config，放函数里不影响插件加载顺序
+    from ..monitor.balance import fetch_balance
+
+    snap = await fetch_balance()
+    if snap is None:
+        await balance_cmd.finish(
+            Message(
+                "\nSensei，余额查询失败。\n"
+                "可能是 API Key 未配置、当前供应商不是 DeepSeek，或者网络不通。"
+            ),
+            at_sender=True,
+        )
+
+    lines = [
+        "\nSensei，DeepSeek 账户余额如下。",
+        "",
+        f"当前余额: ¥{snap.total:.2f}",
+        f"充值额度: ¥{snap.topped_up:.2f}",
+        f"赠送额度: ¥{snap.granted:.2f}",
+        f"可用状态: {'正常' if snap.is_available else '额度已耗尽'}",
+        "",
+        f"播报群: {config.balance_alert_group_id}",
+        f"提醒阈值: ¥{config.balance_low_threshold:.2f}",
+        f"轮询间隔: {config.balance_poll_interval // 60} 分钟"
+        f"（低于阈值后 {config.balance_wait_poll_interval} 秒）",
+    ]
+    await balance_cmd.finish(
+        Message("\n".join(lines)),
+        at_sender=True,
+    )
+
+
 @hello_cmd.handle()
 async def handle_hello(event: GroupMessageEvent):
     """开关启动问候"""
@@ -502,6 +548,7 @@ async def handle_help(event: GroupMessageEvent):
         "",
         "help  -  显示帮助信息",
         "status  -  显示系统运行状态",
+        "balance  -  查看 DeepSeek 账户余额（仅老师）",
         "chat  -  和Kei聊天",
         "kawaii  -  夸一夸Kei",
         "hello ON/OFF  -  开关启动问候",

@@ -44,6 +44,18 @@ def init_db():
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS deepseek_balance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            currency TEXT NOT NULL,
+            total_balance REAL NOT NULL,
+            granted_balance REAL NOT NULL,
+            topped_up_balance REAL NOT NULL,
+            is_available INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_balance_ts ON deepseek_balance(created_at);
     """)
     # 迁移：旧表可能无 offline_count 列
     try:
@@ -225,3 +237,46 @@ def set_live_status(room_id: str, platform: str, is_living: bool,
         (room_id, platform, 1 if is_living else 0, last_title, offline_count),
     )
     conn.commit()
+
+
+# ─── DeepSeek 余额快照 ──────────────────────────────────────────
+#
+# 官方余额接口没有 webhook，只能轮询。每轮落一行快照，
+# 用来：① 跨重启对比出「充值 / 赠送」增量；② 推算 low_armed 初值。
+
+
+def save_balance_snapshot(currency: str, total: float, granted: float,
+                          topped_up: float, is_available: bool) -> int:
+    """插入一条余额快照，返回自增 id"""
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO deepseek_balance "
+        "(currency, total_balance, granted_balance, topped_up_balance, is_available) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (currency, float(total), float(granted), float(topped_up),
+         1 if is_available else 0),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_last_balance_snapshot(currency: str = "CNY") -> Optional[dict]:
+    """取该币种最近一条快照（按 id 倒序），没有则返回 None"""
+    conn = get_conn()
+    cur = conn.execute(
+        "SELECT * FROM deepseek_balance WHERE currency=? ORDER BY id DESC LIMIT 1",
+        (currency,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def cleanup_balance_snapshots(keep_days: int = 90) -> int:
+    """删除 N 天前的余额快照，返回删除行数"""
+    conn = get_conn()
+    cur = conn.execute(
+        "DELETE FROM deepseek_balance WHERE created_at < datetime('now', ?)",
+        (f"-{int(keep_days)} days",),
+    )
+    conn.commit()
+    return cur.rowcount
