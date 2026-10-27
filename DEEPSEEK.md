@@ -1447,3 +1447,75 @@ QQ823262716(朔夜時雨): 老师：我最近在想要不要换个工作，但�
 - **修法**：`_split_reply()` 增加 `_TRANSCRIPT_LINE_RE`，丢掉形如 `QQ\d+(昵称):` 开头的分条
 - **安全性**：只匹配带 QQ 前缀的整行；正常回复里出现「QQ」二字不受影响（有测试覆盖）
 - 整条都是转写行时返回空列表，由上层跳过
+
+---
+
+## 24. thinking 泄漏到内部调用 + 指令闸门（v2.7.3）
+
+### 24.1 事故：KEI ON 报「API 连接失败」
+
+用户重启后 `@Kei KEI ON` 报错。根因是 **v2.7.0 的一处连带影响**：
+
+那一版把 `client.chat()` 的 `enable_thinking` 默认值从 `False` 改成「取 config」，
+于是**所有没显式传参的调用点都被 thinking 接管了**。而其中 6 个调用点的
+`max_tokens` 很小 —— `KEI ON` 的连通性检查只有 **8 个 token**，思考一开口就吃光，
+`content` 返回空串，于是走进「连接失败」分支。
+
+实测（同一请求 × 8 次）：
+
+| 写法 | content 为空 | 说明 |
+|---|---|---|
+| 继承 config（思考开） | **8/8** | 思考 14~25 字符就把 8 token 吃满 |
+| 显式 `enable_thinking=False` | 0/8 | 正常返回 "OK" |
+
+**教训**：把一个「默认关闭」的参数改成「默认继承全局开关」，
+等于给所有既有调用点做了隐式行为变更。改默认值必须把所有调用点过一遍。
+
+### 24.2 修复
+
+| 调用点 | 处理 |
+|---|---|
+| `handle_kei_enable`（8 token） | 显式 `enable_thinking=False` |
+| `handle_read` 第二处（512） | 同上 |
+| `claude` 转述 ×2（200 / 512） | 同上 |
+| `remind` 改写 / 确认语（60 / 100） | 同上 |
+| 两条聊天路径 | 保持继承 config（这是唯一该思考的地方） |
+
+顺带把 `KEI ON` 的失败提示改成带真实原因（原来只会说「请检查 API Key 和网络」）：
+```
+❌ DEEPSEEK API 连接失败。
+原因：接口有响应，但返回内容为空
+未开启 LLM 功能。
+```
+
+### 24.3 加了两道源码级守卫
+
+这类回归靠人记不住，所以都用测试钉死：
+
+| 测试 | 检查什么 |
+|---|---|
+| `tests/test_thinking_scoping.py` | 除两条聊天路径外，每个 `llm_client.chat(...)` 都必须显式写 `enable_thinking=`。新增调用点漏写就红 |
+| `tests/test_command_bypass.py` | `COMMAND_PREFIXES` 必须与各插件注册的指令**完全一致**（多一个少一个都红） |
+
+### 24.4 指令闸门：指令绝不进 LLM
+
+用户提出「`@Kei` 指令应该先匹配指令、完全不管 LLM」。
+
+**原本的行为其实已经是这样**：命令是 priority 3~5，结尾 `finish()` 抛
+`FinishedException` 会立刻停止事件传播，priority 6 的 LLM 处理器根本不会跑。
+
+但那是「靠每个分支都记得 finish」的隐式保证。现在在 `_llm_on_rule` 里加了显式判据：
+
+```python
+def _looks_like_command(text) -> bool:
+    return any(low.startswith(p.lower()) for p in COMMAND_PREFIXES)
+```
+
+`COMMAND_PREFIXES` 共 23 条，覆盖 admin / llm_chat / agent 三个插件的全部指令。
+
+**已知的边界**：`startswith` 是前缀匹配不是单词边界，所以 `statusbar` 会被当成
+`status` 指令（这是各插件原有的口径，闸门与之一致，没有引入新问题）。
+
+### 24.5 测试增量
+
+267 → **317**（+32 指令闸门 +14 thinking 作用域 + 4 转写行等）

@@ -384,10 +384,41 @@ history_cmd     = on_message(rule=to_me() & startswith("history"),  priority=4)
 
 # ─── P6：@Kei LLM 自然回复 ───────────────────────────
 
+# 全部指令前缀（跨 4 个插件）。
+#
+# 为什么需要这份清单：命令本身是 priority 3~5、结尾调 `finish()` 抛
+# FinishedException 来停止传播，所以**正常情况下 LLM 处理器(priority 6)根本不会跑**。
+# 但那是「靠副作用保证」—— 只要某个命令分支漏掉 finish、或者抛了异常，
+# 事件就会继续往下传，`@Kei status` 可能既回了状态又让 Kei 再聊一句。
+#
+# 所以这里再加一道显式闸门：**只要文本以指令开头，LLM 一律不接**。
+# `tests/test_command_bypass.py` 会检查这份清单与各插件注册的指令保持一致。
+COMMAND_PREFIXES = (
+    # admin/commands.py
+    "status", "balance", "help", "list", "pixivlist", "add", "remove",
+    "hello", "chat", "kawaii",
+    # llm_chat（本插件）
+    "KEI", "LLM", "read", "memory", "remember", "edit", "imp", "forget",
+    "sensei", "history",
+    # agent（Claude 集成 + 定时）
+    "Claude", "remind", "daily",
+)
+
+
+def _looks_like_command(text: str) -> bool:
+    """文本是否是一条指令（大小写不敏感，与各插件的 startswith 口径一致）"""
+    t = (text or "").strip()
+    low = t.lower()
+    return any(low.startswith(p.lower()) for p in COMMAND_PREFIXES)
+
+
 def _llm_on_rule(event: GroupMessageEvent) -> bool:
     if not event.group_id:
         return False
     if event.user_id == event.self_id:
+        return False
+    # 指令一律不交给 LLM —— 不依赖「上游调了 finish」这个隐式前提
+    if _looks_like_command(event.get_plaintext()):
         return False
     return get_setting(f"llm_enabled_{event.group_id}", "0") == "1"
 
@@ -442,11 +473,16 @@ async def handle_kei_enable(event: GroupMessageEvent):
             messages=[{"role": "user", "content": "请回复OK"}],
             temperature=0.0,
             max_tokens=8,
+            # 只给 8 个 token，开了 thinking 会立刻被思考吃光 → content 为空
+            enable_thinking=False,
         )
         if not test_result.get("content", "").strip():
+            # 区分「真的连不上」和「连上了但没内容」—— 后者多半是思考吃光了额度
+            detail = (test_result.get("error") or "").strip() or "接口有响应，但返回内容为空"
             await kei_enable_cmd.finish(
                 Message(f"\n❌ {provider} API 连接失败。"
-                        "\n请检查 API Key 和网络。未开启 LLM 功能。"),
+                        f"\n原因：{detail}"
+                        "\n未开启 LLM 功能。"),
                 at_sender=True,
             )
             return
@@ -595,7 +631,11 @@ async def handle_read(event: GroupMessageEvent, bot: Bot):
             f"请列出文件中的关键信息点，以 Kei 的身份回复。"
         )
     })
-    result = await llm_client.chat(messages=msgs, temperature=0.5, max_tokens=512)
+    result = await llm_client.chat(
+        messages=msgs, temperature=0.5, max_tokens=512,
+        # 信息抽取用不着思考，且额度不多，别被思考吃掉
+        enable_thinking=False,
+    )
     reply = result.get("content", "").strip() or "……"
 
     await read_cmd.finish(Message(f"\n{reply}"), at_sender=True)

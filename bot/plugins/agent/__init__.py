@@ -441,7 +441,7 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
             "直接输出你要对 Claude 说的话，不要加引号或其他包装。"
         ),
     })
-    result = await llm_client.chat(messages=msgs, max_tokens=200)
+    result = await llm_client.chat(messages=msgs, max_tokens=200, enable_thinking=False)
     claude_prompt = (result.get("content") or task).strip()
 
     # 2. 发过渡语到群
@@ -483,7 +483,7 @@ async def handle_claude_cmd(event: GroupMessageEvent, bot: Bot):
             f"【Claude 的回复】\n{claude_raw[:3000]}"
         ),
     })
-    result = await llm_client.chat(messages=msgs, max_tokens=512)
+    result = await llm_client.chat(messages=msgs, max_tokens=512, enable_thinking=False)
     kei_reply = (result.get("content") or claude_raw[:500]).strip()
 
     if not kei_reply:
@@ -585,6 +585,8 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
                 ),
             }],
             max_tokens=60,
+            # 内部改写任务，额度只有 60，开了 thinking 会被思考吃光
+            enable_thinking=False,
         )
         rephrased = (r.get("content") or "").strip()
         if rephrased:
@@ -610,7 +612,11 @@ async def handle_remind_cmd(event: GroupMessageEvent, bot: Bot):
                 "请以 Kei 的身份用傲娇的语气确认收到了，1句话。直接输出。"
             ),
         }]
-        r = await llm_client.chat(messages=ctx, max_tokens=100)
+        r = await llm_client.chat(
+            messages=ctx, max_tokens=100,
+            # 同上：内部确认语，100 token 不够思考吃
+            enable_thinking=False,
+        )
         confirm = (r.get("content") or "").strip()
         if confirm:
             kei_confirm = confirm

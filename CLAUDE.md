@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（271 个用例）
+├── tests/                 # pytest（317 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -381,8 +381,15 @@ LLM_THINKING_EFFORT=low     # low / high / max
 
 `client.py` 会检测「只有 reasoning、没有 content」并打 WARNING。
 
-**记忆整理不受这个开关影响**：`_auto_tidy_memories` 固定 `thinking_effort="low"` ——
-内部杂务不该跟着聊天的 effort 一起烧钱。
+**只有两条聊天路径（`handle_llm_at` / `_flush_buffer`）继承 config 的 thinking 设置。**
+其余所有内部调用（`KEI ON` 验证、`read`、`claude`、`remind`、记忆整理、余额旁白）
+**必须显式写 `enable_thinking=`**，否则会被全局开关接管、思考吃光额度。
+
+v2.7.0 就踩了这个坑：`KEI ON` 的连通性检查只给 `max_tokens=8`，被 thinking 接管后
+**8/8 次 content 为空**，直接报「API 连接失败」。修复后 0/8。
+`tests/test_thinking_scoping.py` 现在会逐调用点检查这条规则。
+
+`_auto_tidy_memories` 还额外固定 `thinking_effort="low"` —— 内部杂务不该跟着聊天的 effort 一起烧钱。
 
 ⚠️ **想要温度生效就不能开 thinking**。反过来，开了 thinking 之后调温度不会有任何效果 ——
 如果发现"改了温度没变化"，先检查 `LLM_ENABLE_THINKING`。
@@ -469,6 +476,11 @@ DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← �
 | 通道 | 规则 | 行为 |
 |---|---|---|
 | `@Kei` | priority 6，`block=True`，要求 `llm_enabled` | 即时回复，注入引用原文 |
+> ⚠️ `@Kei` 这一层会先用 `_looks_like_command()` 挡住所有指令前缀 —— **指令绝不进 LLM**。
+> 正常情况下命令（priority 3~5）调 `finish()` 抛 FinishedException 已经能停止传播，
+> 但那依赖"每个分支都记得 finish"；显式闸门让这件事变成硬保证。
+> `COMMAND_PREFIXES` 与各插件注册的指令由 `tests/test_command_bypass.py` 强制同步
+> （多一个少一个都会红）。
 | 自由聊天 | priority 10，排除带 @ 的消息 | 进缓冲区，`IDLE_TIMEOUT 5s / MAX_WAIT 10s / MAX_BATCH 10`，由 LLM 自行判断 `[PASS]` / `[SEP]` 分段 |
 
 缓冲区用**版本号防竞态**：每条新消息重建 task 并递增 `_buffer_version`，旧 task 检测到版本不符即自行退出。
@@ -584,8 +596,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.2
-- **测试**：271 passed
+- **版本**：v2.7.3
+- **测试**：317 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
