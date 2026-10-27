@@ -4,7 +4,12 @@ version = "2.5.2"
 description = "Project Kei - QQ Bot"
 requires-python = ">=3.12"
 dependencies = [
-    "nonebot2[fast]>=2.4.0",
+    # nonebot2 2.4+ 已不再提供 [fast] extra，驱动依赖必须显式列出。
+    # .env 用的是 DRIVER=~fastapi+~websockets
+    "nonebot2>=2.4.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "websockets>=12",
     "nonebot-adapter-onebot>=2.4.0",
     "httpx>=0.28.0",
     "apscheduler>=3.10",

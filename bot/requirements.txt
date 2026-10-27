@@ -1,5 +1,19 @@
+# 运行时依赖
+# 安装：.venv\Scripts\python -m pip install -r bot\requirements.txt
+#
+# 注意：nonebot2 从 2.4 起不再提供 [fast] 这类 extra，
+# 驱动依赖需要显式安装 —— .env 里用的是 DRIVER=~fastapi+~websockets，
+# 所以 fastapi / uvicorn / websockets 三个都得单独列出来。
+
 nonebot2>=2.4.0
 nonebot-adapter-onebot>=2.4.0
+
+# ~fastapi 驱动
+fastapi>=0.100
+uvicorn>=0.20
+# ~websockets 驱动
+websockets>=12
+
 httpx>=0.28.0
 apscheduler>=3.10
 pydantic>=2.0
