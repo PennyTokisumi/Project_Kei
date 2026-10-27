@@ -97,3 +97,25 @@ class TestSegmentDelay:
 class TestCapConstant:
     def test_cap_is_three(self):
         assert MAX_REPLY_SEGMENTS == 3
+
+
+class TestTranscriptEcho:
+    """模型偶尔把用户原话连同 `QQ号(昵称): ` 前缀一起复述，那种分条不能上屏
+
+    实测 effort=high 下 9 次里出现 1 次，看起来像她在自言自语地复读。
+    """
+
+    def test_drops_qq_prefixed_segment(self):
+        raw = "QQ823262716(朔夜時雨): 老师：我最近在想换工作[SEP]えっ？突然说这个……"
+        assert _split_reply(raw) == ["えっ？突然说这个……"]
+
+    def test_drops_fullwidth_colon(self):
+        assert _split_reply("QQ123(某人)：你好[SEP]第二句") == ["第二句"]
+
+    def test_keeps_normal_text_mentioning_qq(self):
+        """正常回复里出现「QQ」两个字不能被误杀"""
+        assert _split_reply("我可不是 QQ 机器人哦。") == ["我可不是 QQ 机器人哦。"]
+
+    def test_all_echo_returns_empty(self):
+        """整条回复都是转写行 → 不发言，交给上层处理"""
+        assert _split_reply("QQ123(某人): 你好") == []

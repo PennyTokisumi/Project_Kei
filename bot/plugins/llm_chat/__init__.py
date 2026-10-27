@@ -69,6 +69,9 @@ REPLY_SEGMENT_DELAY_MAX = 1.8
 _BLANK_LINE_RE = re.compile(r"\n\s*\n+")
 # 段内残留的连续空行压成单个换行
 _INNER_BLANK_RE = re.compile(r"\n\s*\n+")
+# 「转写行」：`QQ123(昵称): 内容` 这种群聊记录格式。
+# 模型偶尔会把用户原话连前缀一起复述一遍，那种分条不能上屏。
+_TRANSCRIPT_LINE_RE = re.compile(r"^\s*QQ\d+\s*[（(][^）)]*[）)]\s*[:：]")
 # 封顶 3 条：再多就变成刷屏了
 MAX_REPLY_SEGMENTS = 3
 
@@ -114,6 +117,14 @@ def _split_reply(reply: str) -> list[str]:
 
     # 段内残留的连续换行压成一个，避免单条消息里出现突兀的空行
     parts = [_INNER_BLANK_RE.sub("\n", p) for p in parts]
+
+    # 丢掉「转写行」：模型偶尔会把用户那句连同 `QQ号(昵称): ` 前缀一起抄一遍再回答。
+    # 实测 effort=high 下 9 次里出现过 1 次，上屏像是她在自言自语地复读。
+    # 只匹配带 QQ 前缀的整行，不碰正常回复。
+    parts = [p for p in parts if not _TRANSCRIPT_LINE_RE.match(p)]
+    if not parts:
+        return []
+
     return parts[:MAX_REPLY_SEGMENTS]
 
 
