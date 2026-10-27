@@ -37,10 +37,34 @@ class Config(BaseSettings):
 # LLM
     llm_provider: str = Field(default="deepseek", description="LLM 供应商: deepseek / gemini")
     deepseek_api_key: str = Field(default="", description="DeepSeek API Key")
-    deepseek_model: str = Field(default="deepseek-v4-flash", description="DeepSeek 模型名")
+    # 用正式名 `deepseek-flash`（= DeepSeek-V4.1-Flash-1017）。
+    # 旧名 `deepseek-v4-flash` 仍被接受、也会路由到同一个模型（服务端会把响应里的
+    # model 改写成 deepseek-flash），但那是"兼容旧名"，不保证长期有效。
+    # 注意别换成 `deepseek-v4-pro`：它不支持视觉，识图会直接失效，价格也是 4.4 倍。
+    deepseek_model: str = Field(default="deepseek-flash", description="DeepSeek 模型名")
     gemini_api_key: str = Field(default="", description="Gemini API Key")
     gemini_model: str = Field(default="gemini-2.5-flash", description="Gemini 模型名")
     llm_proxy: str = Field(default="", description="LLM API 代理地址，如 http://127.0.0.1:7890")
+
+    # 对话温度（默认 0.7）
+    # ⚠️ 开启 thinking 后此值会被**忽略** —— 官方明说 thinking 模式不支持 temperature，
+    # 传了也不报错、但没有任何效果。所以想靠温度调节"活泼程度"，就必须关掉 thinking。
+    chat_temperature: float = Field(default=0.7, description="对话温度（thinking 模式下无效）")
+
+    # 推理（thinking）开关与等级
+    #
+    # 关闭时（默认）：payload 发 `thinking: disabled`，温度生效，出话快、成本低。
+    # 开启时：发 `reasoning_effort`，模型先输出思考再回答，更准但更慢更贵。
+    #
+    # 等级只认 low / high / max（服务端默认 high）。也接受 minimal/medium/xhigh/ultra，
+    # 会按官方映射折算（minimal→low、medium→high、xhigh→high、ultra→max）。
+    #
+    # ⚠️ 开启 thinking 后**必须同时把 max_tokens 调大**：思考 token 计入输出额度，
+    # 512 的额度很容易被思考吃光，导致 content 返回空串（v2.1.9 实测踩过）。
+    llm_enable_thinking: bool = Field(
+        default=False, description="对话是否开启 thinking（关闭时温度才生效）")
+    llm_thinking_effort: str = Field(
+        default="low", description="thinking 等级: low / high / max")
 
     # LLM 计价（元 / 每百万 tokens），仅用于 @Kei LLM 指令的成本估算。
     #
@@ -81,11 +105,6 @@ class Config(BaseSettings):
         if self.llm_provider == "gemini":
             return "https://generativelanguage.googleapis.com/v1beta/openai"
         return "https://api.deepseek.com"
-
-    @property
-    def chat_temperature(self) -> float:
-        """供应商默认温度：统一 0.7"""
-        return 0.7
 
     @property
     def is_gemini(self) -> bool:

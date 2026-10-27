@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（163 个用例）
+├── tests/                 # pytest（185 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -330,6 +330,43 @@ DeepSeek 官方价（2026-10，deepseek-flash，美元/百万 tokens）：
 **旧数据**（迁移前没有缓存字段）两列都是 0，`row_cost()` 会兜底成全按未命中价算 ——
 那些记录产生时的真实情况确实就是全价。
 
+### 模型与推理等级
+**模型名用正式名 `deepseek-flash`**（= DeepSeek-V4.1-Flash-1017，1M 上下文，支持视觉）。
+旧名 `deepseek-v4-flash` 仍被接受、也路由到同一模型（响应里 `model` 会被服务端改写成
+`deepseek-flash`），但那是兼容旧名，不保证长期有效。
+
+⚠️ **别换成 `deepseek-v4-pro`** —— 它**不支持视觉**（识图会失效），价格还是 Flash 的 4.4 倍。
+
+`/models` 当前只有两个：`deepseek-flash`、`deepseek-v4-pro`。
+
+### 推理（thinking）等级
+服务端**默认开启** thinking，默认等级 `high`。我们默认**关掉**它，原因有两个：
+
+| | 关闭（默认） | 开启 |
+|---|---|---|
+| temperature | ✅ 生效 | ❌ **被忽略**（官方明确不支持） |
+| 出话速度 | 快 | 慢（先思考再答） |
+| 成本 | 低 | 高（思考 token 计入输出） |
+| 适合 | 闲聊 / 角色扮演 | 复杂推理、回忆整理 |
+
+`.env` 可配：
+
+```bash
+LLM_ENABLE_THINKING=false   # 对话是否开启
+LLM_THINKING_EFFORT=low     # low / high / max
+```
+
+等级归一化在 `client.normalize_effort()`：官方只认 `low`/`high`/`max`，
+其余写法按官方映射折算（`minimal→low`、`medium→high`、`xhigh→high`、`ultra→max`），
+无法识别时退回 `low`（**不会**默默升到最贵的 `max`）。
+
+⚠️ **开启 thinking 必须同时调大 `max_tokens`**：思考 token 计入输出额度，
+512 的额度很容易被思考吃光，导致 `content` 返回空串（实测 `max_tokens=8` 时
+思考 33 字符就吃光了）。`client.py` 会检测「只有 reasoning、没有 content」并打 WARNING。
+
+⚠️ **想要温度生效就不能开 thinking**。反过来，开了 thinking 之后调温度不会有任何效果 ——
+如果发现"改了温度没变化"，先检查 `LLM_ENABLE_THINKING`。
+
 ### 两条对话通道
 | 通道 | 规则 | 行为 |
 |---|---|---|
@@ -354,7 +391,7 @@ DeepSeek 官方价（2026-10，deepseek-flash，美元/百万 tokens）：
 - **图片识别**：`extract_images()` 取最多 `MAX_IMAGES_PER_MESSAGE = 3` 张 QQ 图片 URL，
   由 `build_context(images=...)` 把**当前消息**发成 OpenAI 多模态格式（text + `image_url`）。
   历史消息的图片不重发（URL 有有效期，且重复计费无意义）。
-  实测 `deepseek-v4-flash` 可直接吃外部图片 URL，但**必须关掉 thinking** —— 开着的话推理 token
+  实测 `deepseek-flash`（= V4.1-Flash-1017）可直接吃外部图片 URL，但**必须关掉 thinking** —— 开着的话推理 token
   会把 `max_tokens` 吃光，`content` 返回空串。`client.py` 默认就发 `thinking: disabled`，别改。
 - 既无文字又无图片的消息（纯视频/贴纸）直接跳过，不进记忆。
 
@@ -439,8 +476,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.5.1
-- **测试**：163 passed
+- **版本**：v2.5.2
+- **测试**：185 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

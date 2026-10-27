@@ -1057,3 +1057,77 @@ v2.4.0 之前写入的，**没有缓存字段**（两列都是 0），只能按�
 - 官方保留调价权，改价要手动覆盖 `.env`
 
 测试：22 个新用例（峰谷边界、命中/未命中 50 倍、旧数据兜底、格式化）
+
+---
+
+## 20. 模型名修正 + 推理等级可配（v2.5.2）
+
+### 20.1 确认当前路由到哪个模型
+
+用户问「现在接的 API 会路由到最新的 DSV4.1-F1017 吗」。查证过程：
+
+1. Kei 发的 model 名是 `deepseek-v4-flash`（config 默认值，`.env` 里那行是注释掉的）
+2. 服务端 `/models` 现在只列两个：`deepseek-flash`、`deepseek-v4-pro`
+3. 真发一次请求，**响应里的 `model` 被改写成 `deepseek-flash`**
+
+对应官方脚注：旧名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 仍被接受，
+但都由 **DeepSeek-V4.1-Flash-1017** 提供服务，按 Flash 价计费。
+
+**结论：确实路由到 V4.1-Flash-1017。** 但依赖退役别名不保险，所以把默认值改成了正式名。
+
+⚠️ 顺带提醒：`/models` 里的 `deepseek-v4-pro` **不支持视觉**（识图会失效），
+价格是 Flash 的 4.4 倍。别为了"更强"随手换过去。
+
+### 20.2 推理等级：机制存在，但之前改不了
+
+原来的情况：
+- `client.chat(enable_thinking=False, thinking_effort="low")` —— 是**函数参数默认值**
+- config / .env 里都没有对应字段，**想改只能动代码**
+- 而且对话主路径（`@Kei` / 自由聊天）**根本没开 thinking**，
+  所以推理等级对聊天完全不生效，只有记忆整理和人设学习（死代码）开着
+
+官方文档（[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)）的关键事实：
+
+| 事实 | 影响 |
+|---|---|
+| **thinking 默认开启**，默认等级 `high` | 不发 `thinking: disabled` 就关不掉 |
+| **thinking 模式下不支持 temperature** | 开了 thinking，温度设置直接失效（不报错） |
+| 只认 `low` / `high` / `max` | 其余写法要折算（minimal→low、medium→high、ultra→max） |
+| 思考内容走 `reasoning_content` 字段 | 与 `content` 平级，**思考 token 计入输出额度** |
+
+### 20.3 改动
+
+| 文件 | 改动 |
+|---|---|
+| `config.py` | `deepseek_model` 默认改 `deepseek-flash`；`chat_temperature` 从写死的 property 改成 Field（`.env` 可覆盖）；新增 `llm_enable_thinking`(False) / `llm_thinking_effort`("low") |
+| `client.py` | 新增 `normalize_effort()` 做等级归一化；新增 `_build_payload()` 把请求体组装抽出来（可脱网单测）；`chat()` 的两个 thinking 参数改成 `None` 时取 config；解析 `reasoning_content` 并在「只有思考没有正文」时打 WARNING |
+| `tests/test_client_thinking.py` | 22 个用例：配置默认值、等级映射、请求体组装（含 Gemini 跳过） |
+
+### 20.4 实测
+
+关闭 thinking（默认）：
+
+```
+{"model": "deepseek-flash", "temperature": 0.7, "max_tokens": 512,
+ "thinking": {"type": "disabled"}}
+```
+
+开启 thinking：
+
+```
+{"model": "deepseek-flash", "temperature": 0.7, "max_tokens": 512,
+ "reasoning_effort": "high"}
+```
+
+复现「思考吃光额度」：
+
+```
+max_tokens=512, effort=low  → 思考 130 字符, content="9.8"        ✅
+max_tokens=8,   effort=max  → 思考 33 字符,  content=""           ❌ 触发 WARNING
+```
+
+### 20.5 给用户的操作结论
+
+- **想调温度**：必须保持 `LLM_ENABLE_THINKING=false`，否则温度无效
+- **想开思考**：同时把 `max_tokens` 调到 1024 以上
+- 角色扮演场景**不建议**开 thinking —— 会失去温度控制，而且慢、贵
