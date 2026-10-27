@@ -61,6 +61,13 @@ class Config(BaseSettings):
     #
     # ⚠️ 开启 thinking 后**必须同时把 max_tokens 调大**：思考 token 计入输出额度，
     # 512 的额度很容易被思考吃光，导致 content 返回空串（v2.1.9 实测踩过）。
+    # 聊天回复的输出预算（@Kei 与自由聊天共用）。
+    # ⚠️ 开启 thinking 后，**思考 token 也算在这里面** —— 512 会被思考吃光、正文变空。
+    # 实测：effort=low 思考约 130~540 字符，effort=max 可达 1400 字符（≈900 token）。
+    # 因此开 thinking 时建议 2048 起步。
+    llm_chat_max_tokens: int = Field(
+        default=512, description="聊天回复的输出 token 上限（thinking 的思考量也占这份额度）")
+
     llm_enable_thinking: bool = Field(
         default=False, description="对话是否开启 thinking（关闭时温度才生效）")
     llm_thinking_effort: str = Field(

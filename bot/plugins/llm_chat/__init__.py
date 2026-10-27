@@ -202,7 +202,9 @@ async def _flush_buffer(gid: int, bot: Bot, version: int):
     })
 
     # LLM 调用
-    result = await llm_client.chat(messages=msgs_for_llm, max_tokens=512)
+    result = await llm_client.chat(
+        messages=msgs_for_llm, max_tokens=config.llm_chat_max_tokens
+    )
     reply = result.get("content", "").strip()
 
     segments = _split_reply(reply)
@@ -298,6 +300,8 @@ async def _auto_tidy_memories(bot: Bot):
     result = await llm_client.chat(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3, max_tokens=1024, enable_thinking=True,
+        # 整理是内部杂务，不该跟着聊天的 effort 一起烧钱
+        thinking_effort="low",
     )
     reply = result.get("content", "").strip()
     if not reply:
@@ -902,7 +906,9 @@ async def handle_llm_at(event: GroupMessageEvent, bot: Bot):
         )
     })
 
-    result = await llm_client.chat(messages=msgs, max_tokens=512)
+    result = await llm_client.chat(
+        messages=msgs, max_tokens=config.llm_chat_max_tokens
+    )
     reply = (result.get("content") or "").strip()
     segments = _split_reply(reply)
     if not segments:

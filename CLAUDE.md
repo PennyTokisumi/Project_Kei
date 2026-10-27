@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（266 个用例）
+├── tests/                 # pytest（267 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -340,7 +340,7 @@ DeepSeek 官方价（2026-10，deepseek-flash，美元/百万 tokens）：
 `/models` 当前只有两个：`deepseek-flash`、`deepseek-v4-pro`。
 
 ### 推理（thinking）等级
-服务端**默认开启** thinking，默认等级 `high`。我们默认**关掉**它，原因有两个：
+服务端**默认开启** thinking，默认等级 `high`。**代码默认关闭**（`llm_enable_thinking=False`），当前 `.env` 已开启（`true` / `high`）。关闭时的好处：
 
 | | 关闭（默认） | 开启 |
 |---|---|---|
@@ -360,9 +360,26 @@ LLM_THINKING_EFFORT=low     # low / high / max
 其余写法按官方映射折算（`minimal→low`、`medium→high`、`xhigh→high`、`ultra→max`），
 无法识别时退回 `low`（**不会**默默升到最贵的 `max`）。
 
-⚠️ **开启 thinking 必须同时调大 `max_tokens`**：思考 token 计入输出额度，
-512 的额度很容易被思考吃光，导致 `content` 返回空串（实测 `max_tokens=8` 时
-思考 33 字符就吃光了）。`client.py` 会检测「只有 reasoning、没有 content」并打 WARNING。
+⚠️ **开启 thinking 必须同时调大 `max_tokens`** —— 思考 token 和正文**共用同一份额度**。
+
+聊天路径的输出预算现在是配置项 `LLM_CHAT_MAX_TOKENS`（默认 512）：
+`handle_llm_at` 和 `_flush_buffer` 都用它，`read` / 人设学习仍各自写死原值。
+
+实测（同一句 RP 提问，`max_tokens=2048`）：
+
+| effort | 思考量 | 输出 token | 512 够吗 |
+|---|---|---|---|
+| low | 536 字符 | 364 | ⚠️ 勉强 |
+| high | 179 字符 | 140 | ✅ |
+| **max** | **1378 字符** | **416** | ❌ 会被吃光 |
+
+另一次闲聊式提问在 `high` 下用了 **806 输出 token**（思考 1231 字符）——
+**512 会直接截断**。所以开 thinking 时建议 `LLM_CHAT_MAX_TOKENS=2048`。
+
+`client.py` 会检测「只有 reasoning、没有 content」并打 WARNING。
+
+**记忆整理不受这个开关影响**：`_auto_tidy_memories` 固定 `thinking_effort="low"` ——
+内部杂务不该跟着聊天的 effort 一起烧钱。
 
 ⚠️ **想要温度生效就不能开 thinking**。反过来，开了 thinking 之后调温度不会有任何效果 ——
 如果发现"改了温度没变化"，先检查 `LLM_ENABLE_THINKING`。
@@ -464,13 +481,17 @@ DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← �
 - **段间隔随机** `_segment_delay()`：`0.5~1.8s`。固定 0.6s 看起来像程序定时器，随机更像真人敲字。
   第一条带 @，后续直接发。
 - 实测（2026-10-26，5 条不同类型提问）：2~3 次会自然分段，其余一条说完 —— 节奏接近真人。
+- **回复长度**：persona 要求「2-4 句、别只丢一句『嗯』」，但不要注水。
+  真正决定能不能说长的，是 `LLM_CHAT_MAX_TOKENS`（见上一节）—— 开 thinking 后 512 会截断。
+- 段落数是**上限不是目标**：宁可 2 条各有内容，也不要 3 条都是碎句。
 - **冷却不是丢弃**：`memory.cooldown_remaining()` 返回还差几秒，调用方 `await` 等它过去再答。
   早期版本直接 `return`，会造成「连问几句只答一次」甚至完全不理会。
 - **图片识别**：`extract_images()` 取最多 `MAX_IMAGES_PER_MESSAGE = 3` 张 QQ 图片 URL，
   由 `build_context(images=...)` 把**当前消息**发成 OpenAI 多模态格式（text + `image_url`）。
   历史消息的图片不重发（URL 有有效期，且重复计费无意义）。
-  实测 `deepseek-flash`（= V4.1-Flash-1017）可直接吃外部图片 URL，但**必须关掉 thinking** —— 开着的话推理 token
-  会把 `max_tokens` 吃光，`content` 返回空串。`client.py` 默认就发 `thinking: disabled`，别改。
+  实测 `deepseek-flash`（= V4.1-Flash-1017）可直接吃外部图片 URL。
+  开 thinking 时必须把 `LLM_CHAT_MAX_TOKENS` 调大（见「推理等级」一节），
+  否则思考会吃光额度，`content` 返回空串 —— 这不是模型不支持图片，是额度不够。
 - 既无文字又无图片的消息（纯视频/贴纸）直接跳过，不进记忆。
 
 ### `event.reply` 的真实来源（重要）
@@ -559,8 +580,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.6.3
-- **测试**：266 passed
+- **版本**：v2.7.0
+- **测试**：267 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

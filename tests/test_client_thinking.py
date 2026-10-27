@@ -16,10 +16,16 @@ class TestConfigDefaults:
         assert config.deepseek_model == "deepseek-flash"
 
     def test_thinking_off_by_default(self):
-        assert config.llm_enable_thinking is False
+        """校验的是**代码默认值**，不是当前生效值 —— .env 会覆盖它"""
+        assert type(config).model_fields["llm_enable_thinking"].default is False
 
     def test_default_effort_is_low(self):
-        assert config.llm_thinking_effort == "low"
+        """同上：环境变量配置成 high 也不该让这条测试失败"""
+        assert type(config).model_fields["llm_thinking_effort"].default == "low"
+
+    def test_chat_max_tokens_default(self):
+        """聊天输出预算默认 512；开 thinking 时要在 .env 调大（思考 token 也占这份额度）"""
+        assert type(config).model_fields["llm_chat_max_tokens"].default == 512
 
     def test_temperature_default(self):
         assert config.chat_temperature == pytest.approx(0.7)
