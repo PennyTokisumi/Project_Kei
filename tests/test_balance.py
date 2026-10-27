@@ -17,6 +17,7 @@ from plugins.monitor.balance import (
     KIND_TOPUP,
     DEFAULT_BALANCE_URL,
     BalanceSnapshot,
+    _build_alert_message,
     detect_events,
     fetch_balance,
     format_alert_text,
@@ -286,7 +287,7 @@ class TestDetectEvents:
 class TestFormatAlertText:
     def test_topup_text(self):
         assert format_alert_text(KIND_TOPUP, 100.0, 133.23) == (
-            "DeepSeek 账户已到账 ¥100.00，当前余额 ¥133.23。"
+            "DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。"
         )
 
     def test_grant_text(self):
@@ -304,7 +305,7 @@ class TestFormatAlertText:
     def test_amounts_rounded_to_two_decimals(self):
         """显示层也要两位小数（不是只依赖 parse 的 round）"""
         assert format_alert_text(KIND_TOPUP, 99.999, 133.234) == (
-            "DeepSeek 账户已到账 ¥100.00，当前余额 ¥133.23。"
+            "DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。"
         )
 
 
@@ -496,7 +497,7 @@ class TestPollBalance:
         # 第一条段是 @Sensei，随后是固定文本（前面有一个空格）
         assert message[0].type == "at"
         assert message[0].data == SENSEI_QQ
-        assert message.plain_text == " DeepSeek 账户已到账 ¥110.00，当前余额 ¥133.23。"
+        assert message.plain_text == "\nDeepSeek 账户充值额度增加 ¥110.00，当前余额 ¥133.23。"
 
         row = get_last_balance_snapshot("CNY")
         assert row["total_balance"] == pytest.approx(133.23)
@@ -548,7 +549,7 @@ class TestPollBalance:
         await poll_balance(bot)
 
         assert len(bot.sent) == 1
-        assert "已到账 ¥100.00" in bot.sent[0][1].plain_text
+        assert "充值额度增加 ¥100.00" in bot.sent[0][1].plain_text
         assert needs_fast_poll() is False
 
     @pytest.mark.asyncio
@@ -687,3 +688,28 @@ class TestPollBalance:
         await poll_balance(_FailingBot())
 
         assert get_last_balance_snapshot("CNY")["total_balance"] == pytest.approx(8.32)
+
+
+class TestAlertMessageShape:
+    """播报消息的形态：@ 之后换行，正文独占一行"""
+
+    def test_newline_after_at(self, fake_messaging):
+        """@ 段 + 文本段，文本段以换行开头
+
+        只断言可观察的结果（段类型、纯文本以换行开头），不碰 segment 的 data 结构 ——
+        测试里的 _FakeMessageSegment 和真实适配器字段形状不完全一致。
+        """
+        msg = _build_alert_message("测试正文。")
+        assert len(msg) == 2
+        assert [s.type for s in msg] == ["at", "text"]
+        assert msg[0].data == str(SENSEI_QQ)
+        # 关键：换行而不是空格 —— 挤在一行像系统通知
+        assert msg[1].data == "\n测试正文。"
+        assert msg.plain_text.startswith("\n")
+
+    def test_text_body_is_untouched(self, fake_messaging):
+        """format_alert_text 不带 @，也不带换行前缀（都由 _build_alert_message 加）"""
+        text = format_alert_text(KIND_TOPUP, 9.99, 41.29)
+        assert not text.startswith("\n")
+        assert not text.startswith("@")
+        assert " ¥9.99" in text

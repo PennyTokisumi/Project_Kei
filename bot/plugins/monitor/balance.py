@@ -216,9 +216,14 @@ def format_alert_text(kind: str, amount: float, balance: float) -> str:
 
     LOW 的阈值取 ``config.balance_low_threshold``，当前余额取参数 ``balance``。
     金额统一两位小数。
+
+    ⚠️ 充值写的是「**充值额度增加**」而不是「已到账」。
+    官方接口只返回当前余额，不提供交易流水，所以两次轮询之间如果发生了消费，
+    ``topped_up`` 的净增量会比实际充值额略小（实测充 ¥10 显示 ¥9.99，
+    差的 1 分就是轮询间隔内消耗掉的）。这不是浮点误差，也**无法从接口还原**。
     """
     if kind == KIND_TOPUP:
-        return f"DeepSeek 账户已到账 ¥{amount:.2f}，当前余额 ¥{balance:.2f}。"
+        return f"DeepSeek 账户充值额度增加 ¥{amount:.2f}，当前余额 ¥{balance:.2f}。"
     if kind == KIND_GRANT:
         return f"DeepSeek 账户收到赠送额度 ¥{amount:.2f}，当前余额 ¥{balance:.2f}。"
     if kind == KIND_LOW:
@@ -336,10 +341,14 @@ def reset_state_for_tests() -> None:
 
 
 def _build_alert_message(text: str) -> Message:
-    """@Sensei + 固定播报文本（@ 只在这里加，format_alert_text 不含）"""
+    """@Sensei + 固定播报文本（@ 只在这里加，format_alert_text 不含）
+
+    @ 后面用**换行**而不是空格 —— 「@某人 正文」挤在一行像系统通知，
+    换行后正文独占一行，读起来干净。
+    """
     return Message([
         MessageSegment.at(SENSEI_QQ),
-        MessageSegment.text(" " + text),
+        MessageSegment.text("\n" + text),
     ])
 
 

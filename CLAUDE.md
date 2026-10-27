@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（264 个用例）
+├── tests/                 # pytest（266 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -410,9 +410,17 @@ LLM_THINKING_EFFORT=low     # low / high / max
 #### 播报 = 固定文本 + 可选旁白
 
 ```
-@老师 DeepSeek 账户已到账 ¥100.00，当前余额 ¥133.23。      ← 固定文本（含 @）
+@老师
+DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← 固定文本（@ 后换行）
 （盯着屏幕愣了一下）诶？账户里怎么突然多了一百块……          ← Kei 旁白（仅 KEI ON 时）
 ```
+
+固定文本里 @ 后面是**换行**不是空格 —— 挤在一行像系统通知，换行后正文独占一行。
+
+⚠️ **充值的金额写「充值额度增加」而不是「已到账」**：
+官方接口只给当前余额、没有交易流水，所以两次轮询之间若有消费，
+`topped_up` 的净增量会比实际充值额略小 —— 实测充 ¥10 显示 ¥9.99，
+差的 1 分就是轮询间隔内消耗掉的。**不是浮点误差，也无法从接口还原**。
 
 旁白由 `llm_chat/balance_comment.py` 生成，**只给事实和视角，不给情绪指令**：
 
@@ -551,8 +559,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.6.2
-- **测试**：264 passed
+- **版本**：v2.6.3
+- **测试**：266 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
