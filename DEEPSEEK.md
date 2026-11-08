@@ -1519,3 +1519,71 @@ def _looks_like_command(text) -> bool:
 ### 24.5 测试增量
 
 267 → **317**（+32 指令闸门 +14 thinking 作用域 + 4 转写行等）
+
+---
+
+## 25. 「只有 SnowLuma 起来了」（v2.7.4）
+
+### 25.1 现象
+
+2026-11-08 重启电脑后重新启动 Kei，**只有 SnowLuma 起来，bot.py 没起来**。
+
+### 25.2 根因：PID 被系统复用
+
+`data/.pid` 里存的是 **28936**（2026-10-30 那次启动留下的，关机时没清理）。
+重启后 Windows 把这个号码分配给了 **Chrome**（13:12 启动）。
+
+旧的双开检测：
+
+```python
+handle = ctypes.windll.kernel32.OpenProcess(0x0400, False, int(old_pid))
+if handle:                      # 只看「这个号码能不能打开」
+    print("Kei 已在运行中，拒绝重复启动")
+    sys.exit(1)
+```
+
+Chrome 占着 28936 → `OpenProcess` 成功 → bot.py 认为自己在重复启动，直接退出。
+SnowLuma 是 `start.bat` 里另一段逻辑启动的，不经过这个检查，所以照常起来。
+
+**这是「只认号码、不认身份」的典型 bug。** PID 复用是 Windows 正常行为，
+任何用 pid 文件做单实例控制的地方都必须校验进程身份。
+
+### 25.3 修复
+
+```python
+def _pid_is_running_python(pid) -> bool:
+    handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle: return False
+    QueryFullProcessImageNameW(handle, 0, buf, byref(size))
+    return _is_python_exe(buf.value)      # "python" in basename
+```
+
+号码被非 python 进程占用 → 视为残留，打印「清理残留的 .pid（28936 已不是本程序的进程）」
+然后正常启动。
+
+### 25.4 现场处理
+
+```bash
+# 删掉残留 pid（bot.py 现在也会自己清理）
+rm data/.pid
+# 用与 start.bat 相同的隐藏方式启动
+wscript.exe  →  cmd /c cd bot && .venv\Scripts\python.exe bot.py
+```
+
+验证：PID 22184 起来、8081 监听、`.pid` 写入 22184、
+`127.0.0.1:9830 → 127.0.0.1:8080` 与 SnowLuma 建立 WS 连接。
+
+> 注意 `.venv\Scripts\python.exe` 会再拉起基础解释器，所以任务管理器里
+> 看到**两个 python 进程**是正常的（venv 转发器 + 真正的解释器），不是重复启动。
+
+### 25.5 测试
+
+`tests/test_pid_check.py` 16 例：
+- `_is_python_exe` 认 python / 拒绝 chrome、node、非 exe、空值
+- `_pid_is_running_python`: 自己 True、非法 PID False
+- **模拟 PID 复用**：进程活着但映像名不是 python → 判定残留
+
+> 测试里不能写 `import bot` —— 会解析到 `bot/` 包而不是入口脚本，
+> 必须用 `importlib.util.spec_from_file_location` 按路径加载 `bot/bot.py`。
+
+测试：317 → **333 passed**

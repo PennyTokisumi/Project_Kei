@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（317 个用例）
+├── tests/                 # pytest（333 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -100,6 +100,16 @@ Project_Kei/
 `config.py` 在**模块导入时**一次性读取 `pyproject.toml` 的 `version` 存入 `VERSION`。
 运行期间不重读 —— **以什么版本启动就永远返回什么版本**。
 所以 `@status` 显示的版本反映的是*进程启动时*的磁盘版本，不是当前磁盘版本。改版本必须重启才可见。
+
+### 双开检测必须认进程身份（不是 PID 号码）
+`bot.py::_check_running()` 读 `data/.pid` 判断是否已在运行。
+**Windows 会复用 PID** —— 2026-11-08 事故：`.pid` 里的 28936 在重启电脑后被
+Chrome 占用，旧代码只看 `OpenProcess` 成功就认定「Kei 已在运行」→ bot.py 直接退出，
+而 `start.bat` 里的 SnowLuma 照常启动，表现成**只有 SnowLuma 起来了**。
+
+现在用 `_pid_is_running_python()`：先 `OpenProcess(QUERY_LIMITED_INFORMATION)`，
+再 `QueryFullProcessImageNameW` 取映像名，**只认 python**。号码被别的程序占用时
+打印「清理残留的 .pid」并正常启动。`tests/test_pid_check.py` 锁死这条。
 
 ### 数据库路径必须动态读
 `utils/db.py` 的 `db_file()` 每次现算 `DATA_DIR / config.db_path`，`get_conn()` 按路径缓存连接
@@ -596,8 +606,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.3
-- **测试**：317 passed
+- **版本**：v2.7.4
+- **测试**：333 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）
