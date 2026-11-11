@@ -1587,3 +1587,72 @@ wscript.exe  →  cmd /c cd bot && .venv\Scripts\python.exe bot.py
 > 必须用 `importlib.util.spec_from_file_location` 按路径加载 `bot/bot.py`。
 
 测试：317 → **333 passed**
+
+---
+
+## 26. 「所有指令都慢」第一轮实测（v2.7.5）
+
+### 26.1 先装上眼睛：日志落盘 + 两个探针
+
+之前 bot 是 VBS 隐藏窗口启动的，**控制台日志等于没有**，出问题只能靠外部日志拼时间线。
+v2.7.5 补上三样东西（都在 `bot.py`，不碰业务逻辑）：
+
+| 组件 | 作用 |
+|---|---|
+| `_setup_logging()` | 日志写入 `data/logs/bot.log`（5 MB 轮转、保留 3 份、后台线程） |
+| `_setup_latency_probe()` | 每个事件进入 NoneBot 时记一条 `[latency] recv`，带 monotonic 时间 |
+| `_setup_loop_watchdog()` | 每 200 ms 心跳，实际间隔超出预期 300 ms 就打 `[watchdog] 事件循环卡顿 N ms` |
+
+⚠️ **NoneBot 的 logger 是 loguru**，不是标准库 logging。
+第一次写成 `logger.addHandler(RotatingFileHandler(...))` 直接抛 AttributeError，
+被 `except` 吞掉，结果文件建出来是 0 字节。loguru 要用 `logger.add(path, rotation=...)`。
+
+### 26.2 实测结论（2026-11-11 23:16）
+
+同一个 `@Kei status` 连发 5 次，从 bot.log 拆出三段耗时：
+
+| # | 接收 → 分发 | 分发 → 完成（含发送） |
+|---|---|---|
+| 1 | 95 ms | **1341 ms** |
+| 2 | 88 ms | **1329 ms** |
+| 3 | 15 ms | **1499 ms** |
+| 4 | 22 ms | **535 ms** |
+| 5 | 5 ms | **504 ms** |
+
+**分发很快（5~95 ms），时间几乎全在"处理到完成"这一段** —— 而 `handle_status` 本身
+只有一次数据库查询（实测 0.47 ms）+ 字符串拼接。所以慢的不是逻辑，是那一步 `await` 发送。
+
+### 26.3 各环节耗时对照
+
+| 环节 | 实测 |
+|---|---|
+| SnowLuma 只读接口（`get_status` / `get_login_info`） | 1 ~ 2 ms |
+| SnowLuma **发送**消息（`send_private_msg`，不经 NoneBot） | **243 ~ 291 ms** |
+| 数据库 `list_targets()` | 0.47 ms |
+| NoneBot 事件分发 | 5 ~ 95 ms |
+| **命令总耗时** | **504 ~ 1499 ms** |
+
+结论：**发送本身就是 250 ms 量级的操作**（QQ hook 写消息 + 等 QQ 确认），
+但实测的 0.5~1.5 s 是基线的 2~6 倍，说明中间还有额外等待，来源尚未确定。
+
+### 26.4 已排除的方向
+
+- ❌ 不是 SnowLuma 服务端处理慢（只读动作 1~2 ms）
+- ❌ 不是数据库慢（亚毫秒）
+- ❌ 不是指令处理逻辑慢（纯字符串拼接）
+- ❌ 不是同步 HTTP（`client.py` 用 `httpx.AsyncClient`；斗鱼/B站/Pixiv 全是 async）
+- ❌ 不是"日志空白"：那只是 await 期间没日志，等于事件循环卡住
+
+### 26.5 下一轮要看什么
+
+重启后 `bot.log` 里会出现 `[watchdog]` 行（只在卡顿时打）。三种可能：
+
+1. **有 watchdog 报警** → 事件循环被同步代码占住，按报警时间点抓元凶
+2. **没有 watchdog 报警**，但 send 仍然 >500 ms → 额外延迟在 SL 的发送队列里
+   （多发并发时排队；Pixiv 推送这种大消息会顶住后面的小消息）
+3. 两者都有 → 分别处理
+
+### 26.6 顺带确认的负载事实
+
+启用的监测目标 99 个，其中 **Pixiv 订阅 86 个**；bot 进程累计 CPU 550 秒 / 运行 1.2 小时
+（约 12% 占用）。这个负载水平对"能不能及时响应命令"是有影响的，后续要一起看。

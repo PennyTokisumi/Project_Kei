@@ -573,6 +573,12 @@ DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← �
 > `sensei` 的隐藏清单里 —— 让普通群友看到他们用不了的指令体验很差。
 > 这条规则由 `tests/test_help_lists.py` 锁死，改权限时记得同步那个文件里的集合。
 
+### 日志与探针（`bot.py`）
+- 日志落盘 `data/logs/bot.log`（loguru，5 MB 轮转 / 保留 3 份 / 后台线程）。
+  **NoneBot 的 logger 是 loguru**，用 `logger.add(...)`，没有 `addHandler`
+- `[latency] recv`：每个事件进入 NoneBot 的时刻（带 monotonic）
+- `[watchdog] 事件循环卡顿 N ms`：200 ms 心跳，迟了 300 ms 才报
+
 ## 常用命令
 
 ```bash
@@ -606,7 +612,7 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.4
+- **版本**：v2.7.5
 - **测试**：333 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）

@@ -71,10 +71,102 @@ def _check_running() -> None:
         pass
 
 
+def _setup_logging() -> None:
+    """把日志同时写进 data/logs/bot.log
+
+    start.bat 用 VBS 隐藏窗口启动，控制台日志等于没有 —— 出问题只能靠猜。
+    这也是性能排查的第一步：没有时间戳就分不清慢在哪一段。
+
+    ⚠️ NoneBot 的 `logger` 是 **loguru**，不是标准库 logging：
+    用 `logger.add(...)` 而不是 `addHandler(...)`（后者根本没有这个方法）。
+    """
+    import config
+
+    try:
+        log_dir = config.DATA_DIR / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        nonebot.logger.add(
+            str(log_dir / "bot.log"),
+            level="INFO",
+            encoding="utf-8",
+            rotation="5 MB",
+            retention=3,
+            enqueue=True,  # 后台线程写入，不阻塞事件循环
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <7} | {name}:{function}:{line} - {message}",
+        )
+        nonebot.logger.info("日志已落盘: " + str(log_dir / "bot.log"))
+    except Exception as exc:  # noqa: BLE001 — 日志失败不能拖垮启动
+        print(f"初始化文件日志失败: {exc!r}")
+
+
+def _setup_latency_probe() -> None:
+    """记录每个事件进入 NoneBot 的时刻
+
+    用途：和 SnowLuma 日志里的 `[Event]` / `[Bridge.Action]` 时间戳对齐，
+    判断「命令→回复」的几秒钟到底花在哪个环节。
+
+    loguru 用 `{}` 占位而不是 `%s`，所以这里统一用 f-string，别混着写。
+    """
+    import time
+
+    from nonebot.message import event_preprocessor
+
+    @event_preprocessor
+    async def _log_event_arrival(event) -> None:
+        try:
+            plain = ""
+            getter = getattr(event, "get_plaintext", None)
+            if callable(getter):
+                plain = getter()[:40]
+            nonebot.logger.info(
+                f"[latency] recv mono={time.monotonic():.3f} "
+                f"type={event.get_type()} plain={plain!r}"
+            )
+        except Exception:  # noqa: BLE001 — 探针绝不影响主流程
+            pass
+
+
+def _setup_loop_watchdog(interval: float = 0.2, threshold: float = 0.3) -> None:
+    """事件循环卡顿探针
+
+    每 200ms 醒一次，记录「实际间隔 − 预期间隔」。asyncio 里 await 网络不会阻塞循环，
+    所以这个差值一旦变大，就说明有**同步代码**占住了线程 —— 那才是让所有指令一起变慢的元凶。
+
+    只打印超过 300ms 的卡顿，平时完全安静。
+    """
+    import asyncio
+    import time
+
+    driver = nonebot.get_driver()
+
+    @driver.on_startup
+    async def _start_watchdog() -> None:
+        async def _beat() -> None:
+            last = time.monotonic()
+            while True:
+                await asyncio.sleep(interval)
+                now = time.monotonic()
+                lag = now - last - interval
+                if lag >= threshold:
+                    nonebot.logger.warning(
+                        f"[watchdog] 事件循环卡顿 {lag * 1000:.0f} ms"
+                    )
+                last = now
+
+        asyncio.create_task(_beat())
+        nonebot.logger.info(
+            f"事件循环探针已启动（每 {interval * 1000:.0f} ms，超过 "
+            f"{threshold * 1000:.0f} ms 才报）"
+        )
+
+
 def main():
     """初始化 NoneBot 并运行"""
     _check_running()
     nonebot.init()
+    _setup_logging()
+    _setup_latency_probe()
+    _setup_loop_watchdog()
 
     # 注册 OneBot v11 适配器
     driver = nonebot.get_driver()
