@@ -2,7 +2,7 @@
 
 import re
 
-from httpx import AsyncClient
+from utils.http import new_client
 from nonebot import logger as nb_logger
 
 from .base import Item, SourceBase
@@ -96,7 +96,7 @@ class DouyuLive(SourceBase):
         """
         url = f"https://www.douyu.com/{self.target_id}"
         try:
-            async with AsyncClient(timeout=10, follow_redirects=True) as client:
+            async with new_client(timeout=10, follow_redirects=True) as client:
                 resp = await client.get(url, headers=HEADERS)
                 html = resp.text
         except Exception:
@@ -126,7 +126,7 @@ class DouyuLive(SourceBase):
         rid = self._real_room_id or self.target_id
         url = DOUYU_API_OFFICIAL.format(room_id=rid)
         try:
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 resp.raise_for_status()
                 try:
@@ -189,7 +189,7 @@ class DouyuLive(SourceBase):
         rid = self._real_room_id or self.target_id
         url = DOUYU_API_FALLBACK.format(room_id=rid)
         try:
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(
                     url,
                     headers={"User-Agent": "Project_Kei/1.0"},
@@ -239,7 +239,7 @@ class DouyuLive(SourceBase):
         # Step 2: 调 betard 官方 API
         try:
             url = DOUYU_API_OFFICIAL.format(room_id=rid)
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(url, headers=HEADERS)
                 if resp.status_code == 200:
                     ct = resp.headers.get("content-type", "")
@@ -258,7 +258,7 @@ class DouyuLive(SourceBase):
         # Step 3: 回退到第三方镜像
         try:
             url = DOUYU_API_FALLBACK.format(room_id=rid)
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(
                     url,
                     headers={"User-Agent": "Project_Kei/1.0"},

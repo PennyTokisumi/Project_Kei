@@ -1656,3 +1656,83 @@ v2.7.5 补上三样东西（都在 `bot.py`，不碰业务逻辑）：
 
 启用的监测目标 99 个，其中 **Pixiv 订阅 86 个**；bot 进程累计 CPU 550 秒 / 运行 1.2 小时
 （约 12% 占用）。这个负载水平对"能不能及时响应命令"是有影响的，后续要一起看。
+
+---
+
+## 27. 「所有指令都慢」根因找到了：httpx 每次重建 SSL 上下文（v2.7.6）
+
+### 27.1 怎么抓到的
+
+v2.7.5 装上日志和 watchdog 后，实测数据很明确：
+
+```
+@Kei status × 5 次
+  接收 → 分发      5 ~ 95 ms      ← 很快
+  分发 → 完成     504 ~ 1499 ms   ← 全在这里
+
+watchdog 报警 18 次，卡顿 847 ~ 5191 ms
+```
+
+`handle_status` 本身只有一次数据库查询（0.47 ms）+ 拼接字符串，所以慢的不是逻辑。
+接着用 `py-spy record` 采 20 秒，结果**96.9% 的 CPU 时间**落在同一条调用链上：
+
+```
+create_default_context  (ssl.py:707)
+  ← create_ssl_context
+    ← AsyncHTTPTransport.__init__
+```
+
+### 27.2 量化
+
+```
+ssl.create_default_context()                    32 ms
+ssl.create_default_context(cafile=certifi...)  393 ms   ← 读 CA 包是大头
+httpx.AsyncHTTPTransport()                     416 ms   ← 内部就这么建
+httpx.AsyncClient(trust_env=False)             386 ms   ← 1 个 transport
+httpx.AsyncClient()                           1522 ms   ← 2~4 个 transport
+```
+
+而 `AsyncHTTPTransport.__init__` **是同步执行的** —— 建 client 的那一瞬间
+事件循环整个停住。项目里有 **17 处** `AsyncClient(...)`，每次 HTTP 请求都新建一个：
+B站动态 2、B站直播 3、斗鱼 5、Pixiv 3、media 1、wbi 1、balance 1、LLM 1。
+
+于是每轮轮询都在"建 client → 卡 1.5 秒 → 发请求"循环，命令自然一起被拖慢。
+监视目标 99 个（Pixiv 86 个），轮询频繁，卡顿就连续不断。
+
+### 27.3 修法
+
+只缓存 SSL 上下文，**不改调用方结构**：
+
+```python
+# bot/utils/http.py
+def ssl_context() -> ssl.SSLContext:      # 首次构建约 400 ms，之后为 0
+    ...
+def new_client(**kwargs) -> httpx.AsyncClient:
+    kwargs.setdefault("verify", ssl_context())
+    return httpx.AsyncClient(**kwargs)
+```
+
+17 处 `AsyncClient(` / `httpx.AsyncClient(` 全换成 `new_client(`，
+其余写法（`async with ... as client`、timeout、proxy）原样保留。
+
+**效果**：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 构造一个 client | 1531 ms | **0 ms** |
+| 全量测试 | 36.4 s | **6.5 s** |
+
+（测试也降速 6 倍，因为测试里同样在大量新建 client —— 这是修复有效的旁证。）
+
+### 27.4 防复发
+
+`tests/test_http_client.py`：
+- `ssl_context()` 必须返回同一个对象
+- `new_client()` 必须把共享上下文传给 httpx
+- 全仓库扫描：**除 `utils/http.py` 外，任何地方再出现 `httpx.AsyncClient(` 都会红**
+
+### 27.5 还剩的空间（本轮没做）
+
+现在仍是「每请求一个 client」，每次新建 TCP/TLS 连接（这部分是异步的，不阻塞循环，
+但多花几百毫秒）。要再快可以全局复用**一个** `AsyncClient`，代价是要处理生命周期
+和"LLM 需要不同代理"这类差异。先解决阻塞，连接复用留作后续。

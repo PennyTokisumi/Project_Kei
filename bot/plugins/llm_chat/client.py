@@ -8,6 +8,7 @@ import httpx
 from nonebot import logger as nb_logger
 
 from config import config
+from utils.http import new_client
 
 # 官方接受的等级是 low / high / max，其余写法按官方映射折算
 _EFFORT_MAP = {
@@ -134,7 +135,7 @@ class LLMClient:
 
         start = time.monotonic()
         try:
-            async with httpx.AsyncClient(proxy=self._proxy, timeout=30) as client:
+            async with new_client(proxy=self._proxy, timeout=30) as client:
                 resp = await client.post(
                     f"{self._base_url}/chat/completions",
                     headers=self._headers(),

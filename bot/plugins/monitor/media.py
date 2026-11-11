@@ -22,7 +22,7 @@ import base64
 import io
 from typing import Optional
 
-from httpx import AsyncClient
+from utils.http import new_client
 from nonebot import logger as nb_logger
 from PIL import Image
 
@@ -115,7 +115,7 @@ async def download_many_as_base64(
     sem = asyncio.Semaphore(max(1, concurrency))
     results: list[Optional[str]] = [None] * len(urls)
 
-    async with AsyncClient(timeout=60, follow_redirects=True) as client:
+    async with new_client(timeout=60, follow_redirects=True) as client:
         async def _one(idx: int, url: str) -> None:
             if not url:
                 return

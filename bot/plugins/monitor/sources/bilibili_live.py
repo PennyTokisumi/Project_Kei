@@ -1,6 +1,6 @@
 """B站直播监测 - 直连 B站直播 API"""
 
-from httpx import AsyncClient
+from utils.http import new_client
 
 from utils.bilibili import make_headers
 from .base import Item, SourceBase
@@ -31,7 +31,7 @@ class BilibiliLive(SourceBase):
     async def _get_username(self, uid: int) -> str:
         """通过 UID 获取用户名"""
         try:
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(
                     BILIBILI_USER_API.format(uid=uid),
                     headers=make_headers("https://www.bilibili.com/"),
@@ -48,7 +48,7 @@ class BilibiliLive(SourceBase):
         """拉取 B站直播间当前状态"""
         url = BILIBILI_LIVE_API.format(room_id=self.target_id)
         try:
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(url, headers=make_headers())
                 resp.raise_for_status()
                 data = resp.json()
@@ -94,7 +94,7 @@ class BilibiliLive(SourceBase):
         try:
             # 先通过直播间 API 获取 UID，再查用户名
             url = BILIBILI_LIVE_API.format(room_id=self.target_id)
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(url, headers=make_headers())
                 if resp.status_code == 200:
                     data = resp.json()

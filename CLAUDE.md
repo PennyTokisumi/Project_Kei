@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（333 个用例）
+├── tests/                 # pytest（338 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -573,6 +573,14 @@ DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← �
 > `sensei` 的隐藏清单里 —— 让普通群友看到他们用不了的指令体验很差。
 > 这条规则由 `tests/test_help_lists.py` 锁死，改权限时记得同步那个文件里的集合。
 
+### HTTP 客户端必须走 `utils/http.py`（性能红线）
+**不要直接写 `httpx.AsyncClient(...)`。** 每建一个 client 都会重新加载 certifi 的 CA 包，
+实测 400~500 ms 且**同步执行**，直接卡住事件循环 —— 2026-11-11 就是它让
+`@Kei status` 慢到 0.5~1.5 秒、watchdog 报警 1~5 秒。
+
+统一用 `from utils.http import new_client`，它复用同一个 `ssl.SSLContext`，
+构造耗时 0 ms。`tests/test_http_client.py` 会扫描全仓库，出现 `httpx.AsyncClient(` 直接红。
+
 ### 日志与探针（`bot.py`）
 - 日志落盘 `data/logs/bot.log`（loguru，5 MB 轮转 / 保留 3 份 / 后台线程）。
   **NoneBot 的 logger 是 loguru**，用 `logger.add(...)`，没有 `addHandler`
@@ -612,8 +620,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.5
-- **测试**：333 passed
+- **版本**：v2.7.6
+- **测试**：338 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

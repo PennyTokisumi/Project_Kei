@@ -37,7 +37,7 @@
 from datetime import datetime
 from typing import Optional
 
-from httpx import AsyncClient
+from utils.http import new_client
 from nonebot import logger as nb_logger
 
 import time as time_module
@@ -124,7 +124,7 @@ async def fetch_page_urls(pid: str, uid: Optional[str] = None) -> list[str]:
     """
     url = PIXIV_ILLUST_PAGES.format(pid=pid)
     try:
-        async with AsyncClient(timeout=20) as client:
+        async with new_client(timeout=20) as client:
             resp = await client.get(url, headers=pixiv_headers(uid))
             if resp.status_code != 200:
                 nb_logger.warning(f"Pixiv 页列表 HTTP {resp.status_code} [pid={pid}]")
@@ -210,7 +210,7 @@ class PixivIllust(SourceBase):
             return []
 
         try:
-            async with AsyncClient(timeout=20) as client:
+            async with new_client(timeout=20) as client:
                 resp = await client.get(url, headers=pixiv_headers(self.target_id))
                 if resp.status_code != 200:
                     # 403/429 是被限流的明确信号，重罚；其他状态码按普通失败处理
@@ -306,7 +306,7 @@ class PixivIllust(SourceBase):
         """从作品列表里取画师名，取不到就退回 uid"""
         url = PIXIV_PROFILE_TOP.format(uid=self.target_id)
         try:
-            async with AsyncClient(timeout=15) as client:
+            async with new_client(timeout=15) as client:
                 resp = await client.get(url, headers=pixiv_headers(self.target_id))
                 if resp.status_code == 200:
                     body = resp.json().get("body") or {}

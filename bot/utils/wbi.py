@@ -9,7 +9,7 @@ import time
 import urllib.parse
 from typing import Optional
 
-from httpx import AsyncClient
+from utils.http import new_client
 
 # ─── 固定混淆表（取自 B站 前端源码）─────────────────────────
 MIXIN_KEY_ENC_TAB = [
@@ -30,7 +30,7 @@ async def _get_mixin_key() -> str:
         return _cached_mixin_key
 
     try:
-        async with AsyncClient(timeout=10) as client:
+        async with new_client(timeout=10) as client:
             resp = await client.get(
                 "https://api.bilibili.com/x/web-interface/nav",
                 headers={

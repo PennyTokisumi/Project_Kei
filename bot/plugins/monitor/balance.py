@@ -20,6 +20,7 @@ from nonebot import logger as nb_logger
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
 from config import SENSEI_QQ, config
+from utils.http import new_client
 
 from .database import (
     cleanup_balance_snapshots,
@@ -140,7 +141,7 @@ async def fetch_balance(currency: str = "CNY") -> BalanceSnapshot | None:
 
     url = _balance_url()
     try:
-        async with httpx.AsyncClient(timeout=BALANCE_TIMEOUT) as client:
+        async with new_client(timeout=BALANCE_TIMEOUT) as client:
             resp = await client.get(
                 url,
                 headers={

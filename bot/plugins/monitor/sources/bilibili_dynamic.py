@@ -3,7 +3,7 @@
 import re
 from typing import Optional
 
-from httpx import AsyncClient
+from utils.http import new_client
 
 from utils.wbi import sign_params
 from utils.bilibili import make_headers
@@ -45,7 +45,7 @@ class BilibiliDynamic(SourceBase):
     async def fetch(self) -> list[Item]:
         url = BILIBILI_DYNAMIC_API.format(uid=self.target_id)
         try:
-            async with AsyncClient(timeout=15) as client:
+            async with new_client(timeout=15) as client:
                 resp = await client.get(url, headers=make_headers())
                 resp.raise_for_status()
                 data = resp.json()
@@ -260,7 +260,7 @@ class BilibiliDynamic(SourceBase):
     async def get_display_name(self) -> str:
         try:
             params = await sign_params({"mid": self.target_id})
-            async with AsyncClient(timeout=10) as client:
+            async with new_client(timeout=10) as client:
                 resp = await client.get(
                     "https://api.bilibili.com/x/space/wbi/acc/info",
                     params=params, headers=make_headers(),
