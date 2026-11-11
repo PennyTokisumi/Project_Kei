@@ -596,6 +596,9 @@ DeepSeek 账户充值额度增加 ¥100.00，当前余额 ¥133.23。      ← �
 # 启动
 start.bat
 
+# 性能排查（需先 pip install py-spy；用法见 DEEPSEEK.md §27.6）
+# .venv\Scripts\py-spy.exe record --pid <真解释器PID> --duration 20 --rate 100 --format speedscope
+
 # CLI 管理（注意：CLI 加的目标准入需重启才生效）
 cd bot
 ..\.venv\Scripts\python cli.py add <group_id> <platform> <target_id>

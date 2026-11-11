@@ -1736,3 +1736,36 @@ def new_client(**kwargs) -> httpx.AsyncClient:
 现在仍是「每请求一个 client」，每次新建 TCP/TLS 连接（这部分是异步的，不阻塞循环，
 但多花几百毫秒）。要再快可以全局复用**一个** `AsyncClient`，代价是要处理生命周期
 和"LLM 需要不同代理"这类差异。先解决阻塞，连接复用留作后续。
+
+### 27.6 下次再查「卡在哪一行」：py-spy 用法（工具本身没留）
+
+py-spy 是排查这次问题时装的，**用完已卸载**（它只是开发期工具，不该躺在 venv 里）。
+需要时重装一条命令：
+
+    .venv\Scripts\python.exe -m pip install py-spy
+
+用法（这次就是这么找到根因的）：
+
+    # 1. 先确认哪个 PID 是真正的解释器
+    #    .venv\Scripts\python.exe 只是转发器，CPU 为 0、只有 1 个线程，抓它会报
+    #    "Failed to find python version from target process"
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+      Where-Object { $_.CommandLine -like '*bot.py*' } |
+      ForEach-Object { "{0}  线程 {1}" -f $_.ProcessId, (Get-Process -Id $_.ProcessId).Threads.Count }
+
+    # 2. 抓某一瞬间所有线程的调用栈（看"现在卡在哪"）
+    .venv\Scripts\py-spy.exe dump --pid <真解释器PID> --nonblocking
+
+    # 3. 采一段时间看 CPU 花在哪（看"一直在干什么"）
+    .venv\Scripts\py-spy.exe record --pid <PID> --duration 20 --rate 100 ^
+        --format speedscope --output %TEMP%\profile.json --nonblocking
+
+`speedscope` 格式是 JSON，可以直接用 Python 统计栈顶热点（数 `profiles[0].samples`
+里每个栈顶帧出现的次数），不必打开可视化网站。
+
+**这次的经验**：`dump` 抓到的常常是"空闲"（主线程等在 IocpProactor 上），
+因为卡顿是间歇性的；真正定位靠的是 `record` —— 它显示 96.9% 的采样都落在
+`create_default_context ← AsyncHTTPTransport.__init__`，一眼就看出是建 client 太贵。
+
+**注意**：抓栈前先看 `data/logs/bot.log` 里的 `[watchdog]` 行，确认卡顿时间点和持续时长，
+再去对照 `dump`/`record`，比盲抓高效得多。
