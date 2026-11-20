@@ -1820,3 +1820,69 @@ py-spy 是排查这次问题时装的，**用完已卸载**（它只是开发期
 旧键 `BALANCE_ALERT_GROUP_ID` 不再被读取，`extra="ignore"` 会**静默**忽略它 ——
 升级后不改 `.env` 的话播报会掉到默认值 `1031343674`（只发那一个群）。
 本机 `.env` 已改成 `BALANCE_ALERT_GROUP_IDS=795185048,1031343674`。
+
+## 29. 低余额再加一档 ¥5（v2.7.8）
+
+### 29.1 需求与取舍
+
+原话（m01648）：「增设一档 低于5元再播报一次」。
+
+只在**判定层**加一个阈值，不引入新的状态机类型 —— 两档各自独立的 `_armed` / `_alerted`，
+结构与第一档完全同构。这样做的代价只有两个新字段，收益是重启推导、重新武装、
+多群投递这些既有逻辑一行都不用改。
+
+配置：`BALANCE_CRITICAL_THRESHOLD=5`（元，浮点），默认值写在 `config.py`，
+不写 `.env` 也能用。
+
+### 29.2 判定顺序（`detect_events`）
+
+```
+TOPUP → GRANT → 不可用=LOW → CRITICAL → LOW
+```
+
+- **CRITICAL 在 LOW 之前判定**，命中后把 `low_reported` 置真 ——
+  一次从 50 掉到 3 只发**一条**（¥5 那条，因为更严重），不会连发两条。
+- `is_available=false` 仍是只报一条 LOW，没让 CRITICAL 插手。
+
+### 29.3 状态
+
+| 状态 | 负责 | 重新武装条件 |
+|---|---|---|
+| `_low_armed` / `_low_alerted` | ¥10 档 | `total >= BALANCE_LOW_THRESHOLD` |
+| `_critical_armed` / `_critical_alerted` | ¥5 档 | `total >= BALANCE_CRITICAL_THRESHOLD` |
+
+- `_init_state_from_db()` 两档**分别**按最后快照推导：7 块重启 ⇒ ¥10 档算已提醒、¥5 档仍武装。
+- `_apply_snapshot_to_state()` 只重新武装「回到的那一档」：3 → 6 只重新武装 ¥5 档，
+  ¥10 档不动（6 块依旧算低余额，没必要再喊一次）。
+- `poll_balance()` 命中 CRITICAL 时**同时**把 ¥10 档标成已提醒 ——
+  否则下一轮 `4 < 10` 会补发一条「不足 ¥10」，两档就变成连续刷屏。
+
+### 29.4 文案
+
+| 事件 | 固定文本 |
+|---|---|
+| 第一档 | `DeepSeek 账户余额不足 ¥10.00，当前仅剩 ¥8.32，请及时充值。` |
+| 第二档 | `DeepSeek 账户余额不足 ¥5.00，当前仅剩 ¥3.20，请立即充值。` |
+
+措辞刻意不同（「及时」vs「立即」），群友看到两条能分辨哪条更急。
+
+旁白（`balance_comment.py`）的 critical 事实块：
+`…总余额只剩 ¥3.20，已经跌破 ¥5.00 这条线了 —— 比上次提醒时更少。`
+舞台指示：`（你看着几乎见底的余额，手停在键盘上。）`
+阈值缺省按 kind 取，critical 用 `config.balance_critical_threshold`。
+
+### 29.5 测试
+
+- `TestDetectEvents` +4：CRITICAL 武装/未武装、一次跨两档只报 CRITICAL、
+  7 块只报 LOW、不传第二档阈值时与旧单档行为一致。
+- `TestFormatAlertText.test_critical_text`：阈值取第二档、措辞「请立即充值」。
+- `TestPollBalance` +2：完整序列 8.32→LOW、3.20→CRITICAL（不重复）、充到 6 只武装 ¥5 档、
+  4.0 再报一次；重启快照 7 块 → 首轮不播、跌破 5 只报 CRITICAL。
+- `test_balance_comment.py`：critical 事实块、critical 阈值默认值，
+  并把三处 `("topup","grant","low")` 遍历扩到四个 kind。
+- 全量：**354 passed, 2 skipped**。
+
+### 29.6 升级注意
+
+- `.env` 新增 `BALANCE_CRITICAL_THRESHOLD=5`；不写就用默认 5.0。
+- 重启首轮只建基线；若重启时余额已低于 5，按 DB 快照推导为「已提醒」，不会补播。

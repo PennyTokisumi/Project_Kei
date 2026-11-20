@@ -499,7 +499,8 @@ async def handle_balance(event: GroupMessageEvent):
         f"可用状态: {'正常' if snap.is_available else '额度已耗尽'}",
         "",
         f"播报群: {', '.join(str(g) for g in config.balance_alert_groups) or '未配置'}",
-        f"提醒阈值: ¥{config.balance_low_threshold:.2f}",
+        f"提醒阈值: ¥{config.balance_low_threshold:.2f}"
+        f"（严重 ¥{config.balance_critical_threshold:.2f}）",
         f"轮询间隔: {config.balance_poll_interval // 60} 分钟"
         f"（低于阈值后 {config.balance_wait_poll_interval} 秒）",
     ]

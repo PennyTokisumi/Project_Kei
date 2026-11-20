@@ -39,6 +39,7 @@ _STAGE_DIRECTIONS = {
     "topup": "（你合上账户页面，抬起头。）",
     "grant": "（你盯着那笔额度看了一会儿。）",
     "low": "（你盯着账户余额，沉默了一下。）",
+    "critical": "（你看着几乎见底的余额，手停在键盘上。）",
 }
 
 # 事实块前缀：把事件写成「她自己注意到的变化」，而不是「通知/请求」
@@ -80,7 +81,7 @@ _QUOTE_PAIRS = (
     ("'", "'"),
 )
 
-_FACT_KINDS = ("topup", "grant", "low")
+_FACT_KINDS = ("topup", "grant", "low", "critical")
 
 
 # ─── 纯函数区（脱网可单测）───────────────────────────────
@@ -114,6 +115,12 @@ def _build_fact(kind: str, amount: float, balance: float, threshold: float) -> s
             f"你看了眼自己的 DeepSeek 账户：总余额只剩 ¥{balance:.2f}，"
             f"已经低于 ¥{threshold:.2f} 了。"
         )
+    if kind == "critical":
+        # 第二次提醒：事实里带上「又少了一次」的对比，她自己能看出这是更严重的那档
+        return (
+            f"你看了眼自己的 DeepSeek 账户：总余额只剩 ¥{balance:.2f}，"
+            f"已经跌破 ¥{threshold:.2f} 这条线了 —— 比上次提醒时更少。"
+        )
     raise ValueError(f"未知的余额事件类型：{kind!r}")
 
 
@@ -125,12 +132,13 @@ def build_messages(kind: str, amount: float, balance: float,
     顺序固定，**不要重排**：persona 在最前，变化内容在后，理由与前缀缓存一致
     （见 ``memory.build_context`` 的顺序约定）。
 
-    :param kind: ``topup`` / ``grant`` / ``low``，其它值抛 ``ValueError``
-    :param amount: 本次变化的金额（元）；``low`` 场景用不到，可为 0
+    :param kind: ``topup`` / ``grant`` / ``low`` / ``critical``，其它值抛 ``ValueError``
+    :param amount: 本次变化的金额（元）；``low`` / ``critical`` 场景用不到，可为 0
     :param balance: 变化后的总余额（元）
     :param group_id: 群号，只用于环境块
     :param now: 当前时间，默认取北京时间；显式传入便于测试
-    :param threshold: 低余额阈值，默认取 ``config.balance_low_threshold``
+    :param threshold: 阈值，默认按 kind 取 ``config.balance_low_threshold``
+        （``critical`` 取 ``config.balance_critical_threshold``）
     """
     if kind not in _FACT_KINDS:
         raise ValueError(f"未知的余额事件类型：{kind!r}")
@@ -138,7 +146,10 @@ def build_messages(kind: str, amount: float, balance: float,
     if now is None:
         now = _now_beijing()
     if threshold is None:
-        threshold = config.balance_low_threshold
+        threshold = (
+            config.balance_critical_threshold
+            if kind == "critical" else config.balance_low_threshold
+        )
 
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     fact = _build_fact(kind, amount, balance, threshold)
@@ -257,7 +268,7 @@ async def kei_balance_comment(kind: str, amount: float, balance: float,
     - 该群未开启 LLM（``llm_enabled`` 为假）
     - LLM 未配置 / 调用失败 / 超时（15 秒）
     - 模型返回空、``[PASS]``、或只有空白
-    - ``kind`` 不是 topup / grant / low 之一
+    - ``kind`` 不是 topup / grant / low / critical 之一
 
     每条都已清洗：去首尾空白、去掉可能出现的 @ 前缀、去掉包裹的引号，
     单段超过 80 字则截断（并打一条 debug 日志）。

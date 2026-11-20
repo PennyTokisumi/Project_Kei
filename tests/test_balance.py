@@ -12,6 +12,7 @@ import pytest
 from config import SENSEI_QQ, config
 from plugins.monitor import balance as balance_mod
 from plugins.monitor.balance import (
+    KIND_CRITICAL,
     KIND_GRANT,
     KIND_LOW,
     KIND_TOPUP,
@@ -290,6 +291,36 @@ class TestDetectEvents:
         events = detect_events(None, curr_low, 10.0, True)
         assert [k for k, _ in events] == [KIND_LOW]
 
+    @pytest.mark.parametrize("armed,expected", [
+        (True, [(KIND_CRITICAL, 3.20)]),
+        (False, []),
+    ])
+    def test_cross_critical_threshold(self, armed, expected):
+        """跌破第二档：只有该档武装时才报 CRITICAL"""
+        prev = snap(total=8.32, topped_up=8.32)
+        curr = snap(total=3.20, topped_up=3.20)
+        assert detect_events(prev, curr, 10.0, False, 5.0, armed) == expected
+
+    def test_cross_both_tiers_reports_critical_only(self):
+        """一次从 50 掉到 3：两档同时跌破只报 CRITICAL，不连发两条"""
+        prev = snap(total=50.0, topped_up=50.0)
+        curr = snap(total=3.20, topped_up=3.20)
+        assert detect_events(prev, curr, 10.0, True, 5.0, True) == [
+            (KIND_CRITICAL, 3.20)
+        ]
+
+    def test_between_tiers_reports_low(self):
+        """7 块只过第一档 → 仍是 LOW"""
+        prev = snap(total=50.0, topped_up=50.0)
+        curr = snap(total=7.0, topped_up=7.0)
+        assert detect_events(prev, curr, 10.0, True, 5.0, True) == [(KIND_LOW, 7.0)]
+
+    def test_critical_threshold_none_keeps_old_behavior(self):
+        """不传第二档阈值 → 行为与单档版本一致"""
+        prev = snap(total=50.0, topped_up=50.0)
+        curr = snap(total=3.20, topped_up=3.20)
+        assert detect_events(prev, curr, 10.0, True) == [(KIND_LOW, 3.20)]
+
 
 # ─── 3. 播报文本 ────────────────────────────────────────
 
@@ -310,6 +341,13 @@ class TestFormatAlertText:
         monkeypatch.setattr(config, "balance_low_threshold", 10.0)
         assert format_alert_text(KIND_LOW, 8.32, 8.32) == (
             "DeepSeek 账户余额不足 ¥10.00，当前仅剩 ¥8.32，请及时充值。"
+        )
+
+    def test_critical_text(self, monkeypatch):
+        """CRITICAL 用第二档阈值，措辞是「请立即充值」"""
+        monkeypatch.setattr(config, "balance_critical_threshold", 5.0)
+        assert format_alert_text(KIND_CRITICAL, 3.2, 3.2) == (
+            "DeepSeek 账户余额不足 ¥5.00，当前仅剩 ¥3.20，请立即充值。"
         )
 
     def test_amounts_rounded_to_two_decimals(self):
@@ -539,6 +577,85 @@ class TestPollBalance:
         # 余额没变 → 不重复提醒
         await poll_balance(bot)
         assert len(bot.sent) == 1
+
+    @pytest.mark.asyncio
+    async def test_two_tiers_alert_in_sequence(self, monkeypatch, fake_messaging):
+        """8.32 报 LOW 一次；再跌破 5 报 CRITICAL 一次；之后都不重复"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", False)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_critical_threshold", 5.0)
+        monkeypatch.setattr(balance_mod, "ALERT_GAP_SECONDS", 0)
+
+        save_balance_snapshot("CNY", 50.0, 0.0, 50.0, True)
+        reset_state_for_tests()
+
+        state = {"total": 8.32}
+
+        async def fake_fetch():
+            return snap(total=state["total"], granted=0.0, topped_up=state["total"])
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        bot = _FakeBot()
+        await poll_balance(bot)                       # 8.32 → 第一档
+        assert len(bot.sent) == 1
+        assert "余额不足 ¥10.00" in bot.sent[0][1].plain_text
+
+        await poll_balance(bot)                       # 没变化
+        assert len(bot.sent) == 1
+
+        state["total"] = 3.20
+        await poll_balance(bot)                       # 跌破第二档
+        assert len(bot.sent) == 2
+        assert "余额不足 ¥5.00" in bot.sent[1][1].plain_text
+        assert "请立即充值" in bot.sent[1][1].plain_text
+
+        await poll_balance(bot)                       # 没变化
+        assert len(bot.sent) == 2
+
+        # 充到 6 块：只重新武装第二档，不该再喊一次「不足 ¥10」
+        state["total"] = 6.0
+        await poll_balance(bot)
+        assert len(bot.sent) == 3
+        assert "充值额度增加" in bot.sent[2][1].plain_text
+
+        state["total"] = 4.0
+        await poll_balance(bot)                       # 再次跌破第二档 → 再报一次
+        assert len(bot.sent) == 4
+        assert "余额不足 ¥5.00" in bot.sent[3][1].plain_text
+
+    @pytest.mark.asyncio
+    async def test_restart_between_tiers_only_critical_fires(
+        self, monkeypatch, fake_messaging
+    ):
+        """重启时快照 7 块（第一档已提醒过）→ 首轮不播；再跌破 5 只报 CRITICAL"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", False)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_critical_threshold", 5.0)
+        monkeypatch.setattr(balance_mod, "ALERT_GAP_SECONDS", 0)
+
+        save_balance_snapshot("CNY", 7.0, 0.0, 7.0, True)
+        reset_state_for_tests()
+
+        state = {"total": 7.0}
+
+        async def fake_fetch():
+            return snap(total=state["total"], granted=0.0, topped_up=state["total"])
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        bot = _FakeBot()
+        await poll_balance(bot)
+        assert bot.sent == []
+
+        state["total"] = 4.0
+        await poll_balance(bot)
+        assert len(bot.sent) == 1
+        assert "余额不足 ¥5.00" in bot.sent[0][1].plain_text
 
     @pytest.mark.asyncio
     async def test_topup_after_low_rearms(self, monkeypatch, fake_messaging):

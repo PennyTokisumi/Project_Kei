@@ -26,6 +26,7 @@ STAGE_DIRECTIONS = {
     "topup": "（你合上账户页面，抬起头。）",
     "grant": "（你盯着那笔额度看了一会儿。）",
     "low": "（你盯着账户余额，沉默了一下。）",
+    "critical": "（你看着几乎见底的余额，手停在键盘上。）",
 }
 
 
@@ -65,7 +66,7 @@ def _install_chat(monkeypatch, *, result=None, exc=None, calls=None):
 
 
 class TestBuildMessages:
-    @pytest.mark.parametrize("kind", ["topup", "grant", "low"])
+    @pytest.mark.parametrize("kind", ["topup", "grant", "low", "critical"])
     def test_roles_and_persona_first(self, kind):
         """persona 必须是第一条 system，最后一条是对应的舞台指示"""
         messages = bc.build_messages(kind, 10.0, 20.0, GROUP_ID, now=NOW)
@@ -111,6 +112,24 @@ class TestBuildMessages:
         messages = bc.build_messages("low", 0.0, 3.0, GROUP_ID, now=NOW)
         assert "¥8.80" in messages[2]["content"]
 
+    def test_critical_fact(self):
+        """第二档：事实块写「跌破」，并点明比上次提醒时更少"""
+        messages = bc.build_messages("critical", 0.0, 3.5, GROUP_ID, now=NOW,
+                                     threshold=5.0)
+        assert messages[2]["content"] == (
+            FACT_PREFIX + "\n"
+            + "你看了眼自己的 DeepSeek 账户：总余额只剩 ¥3.50，"
+              "已经跌破 ¥5.00 这条线了 —— 比上次提醒时更少。"
+        )
+
+    def test_critical_threshold_defaults_to_config(self, monkeypatch):
+        """critical 不传 threshold 时取 config.balance_critical_threshold（不是 low）"""
+        monkeypatch.setattr(config, "balance_low_threshold", 8.8)
+        monkeypatch.setattr(config, "balance_critical_threshold", 4.4)
+        messages = bc.build_messages("critical", 0.0, 3.0, GROUP_ID, now=NOW)
+        assert "¥4.40" in messages[2]["content"]
+        assert "¥8.80" not in messages[2]["content"]
+
     def test_env_block_and_fact_prefix(self):
         """环境块带群号 + 时间；事实块以「你刚注意到的变化」开头"""
         messages = bc.build_messages("topup", 10.0, 15.0, GROUP_ID, now=NOW)
@@ -120,7 +139,7 @@ class TestBuildMessages:
 
     def test_format_rule_exact(self):
         """第 [3] 条是纯格式约束，三个场景共用一个字符串"""
-        for kind in ("topup", "grant", "low"):
+        for kind in ("topup", "grant", "low", "critical"):
             messages = bc.build_messages(kind, 10.0, 20.0, GROUP_ID, now=NOW)
             assert messages[3] == {"role": "system", "content": FORMAT_RULE}
 
@@ -133,7 +152,7 @@ class TestBuildMessages:
         """
         forbidden = ("感谢", "感恩", "谢谢", "催", "幽默", "嘴硬", "傲娇",
                      "卖萌", "撒娇", "表演", "表现出", "表现得")
-        for kind in ("topup", "grant", "low"):
+        for kind in ("topup", "grant", "low", "critical"):
             messages = bc.build_messages(kind, 10.0, 20.0, GROUP_ID, now=NOW)
             # [1:] 跳过 persona —— 那里本来就该有性格描写
             text = "\n".join(m["content"] for m in messages[1:])

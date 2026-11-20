@@ -113,6 +113,8 @@ class Config(BaseSettings):
         default=60, description="余额低于阈值、等待充值时的加密轮询间隔（秒）")
     balance_low_threshold: float = Field(
         default=10.0, description="低余额阈值（元）。跌破提醒一次，回到阈值以上后重新武装")
+    balance_critical_threshold: float = Field(
+        default=5.0, description="严重低余额阈值（元）。跌破同样的只提醒一次")
     balance_kei_comment: bool = Field(
         default=True, description="播报后是否让 Kei 再跟一句（需该群已 KEI ON）")
 

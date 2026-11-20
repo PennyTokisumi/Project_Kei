@@ -37,6 +37,7 @@ BALANCE_TIMEOUT = 20.0
 KIND_TOPUP = "topup"
 KIND_GRANT = "grant"
 KIND_LOW = "low"
+KIND_CRITICAL = "critical"
 
 # 增量判定阈值：金额只有两位小数，1 分钱以内的差异只可能是浮点噪声
 CHANGE_EPSILON = 0.01
@@ -175,17 +176,24 @@ async def fetch_balance(currency: str = "CNY") -> BalanceSnapshot | None:
 
 
 def detect_events(prev: BalanceSnapshot | None, curr: BalanceSnapshot,
-                  low_threshold: float, low_armed: bool) -> list[tuple[str, float]]:
+                  low_threshold: float, low_armed: bool,
+                  critical_threshold: Optional[float] = None,
+                  critical_armed: bool = True) -> list[tuple[str, float]]:
     """对比前后两次快照，返回 [(kind, amount)]（纯函数，可能同时有多个事件）
 
+    低余额有**两档**：跌破 ``low_threshold`` 报一次 LOW，
+    之后再跌破 ``critical_threshold`` 再报一次 CRITICAL。
+
     规则：
-    - ``prev is None``（首次启动建基线）→ **不报** TOPUP/GRANT；
-      但若 ``curr.total < low_threshold`` 且 ``low_armed`` 为真，照样报 LOW
+    - ``prev is None``（首次启动建基线）→ **不报** TOPUP/GRANT；低余额照常判定
     - 充值增量 ``> 0.01`` → (TOPUP, 增量)
     - 赠送增量 ``> 0.01`` → (GRANT, 增量)
-    - ``curr.is_available`` 为 False → (LOW, 当前余额)
-    - ``curr.total < low_threshold`` 且 ``low_armed`` 且前面没报过 LOW → (LOW, 当前余额)
-    - 顺序固定：TOPUP → GRANT → LOW
+    - ``curr.is_available`` 为 False → (LOW, 当前余额)，与武装状态无关
+    - ``curr.total < critical_threshold`` 且 ``critical_armed`` → (CRITICAL, 当前余额)
+    - ``curr.total < low_threshold`` 且 ``low_armed`` → (LOW, 当前余额)
+    - **两档同时满足只报 CRITICAL** —— 一次从 12 块掉到 3 块是同一件事，
+      连发「不足 ¥10」「不足 ¥5」两条只会像刷屏
+    - 顺序固定：TOPUP → GRANT → 低余额
     """
     events: list[tuple[str, float]] = []
 
@@ -206,7 +214,13 @@ def detect_events(prev: BalanceSnapshot | None, curr: BalanceSnapshot,
         events.append((KIND_LOW, curr.total))
         low_reported = True
 
-    # 跌破阈值：low_armed 保证一波低余额只提醒一次，
+    # 跌破更严重的那档：只要这一档还武装着就报，且吞掉同轮的 LOW
+    if (not low_reported and critical_threshold is not None
+            and critical_armed and curr.total < critical_threshold):
+        events.append((KIND_CRITICAL, curr.total))
+        low_reported = True
+
+    # 跌破第一档：armed 保证一波低余额只提醒一次，
     # 回到阈值以上后由调用方重新武装
     if not low_reported and low_armed and curr.total < low_threshold:
         events.append((KIND_LOW, curr.total))
@@ -217,7 +231,8 @@ def detect_events(prev: BalanceSnapshot | None, curr: BalanceSnapshot,
 def format_alert_text(kind: str, amount: float, balance: float) -> str:
     """固定播报文本（**不含 @**，上层自己加）
 
-    LOW 的阈值取 ``config.balance_low_threshold``，当前余额取参数 ``balance``。
+    LOW 的阈值取 ``config.balance_low_threshold``，CRITICAL 取
+    ``config.balance_critical_threshold``，当前余额取参数 ``balance``。
     金额统一两位小数。
 
     ⚠️ 充值写的是「**充值额度增加**」而不是「已到账」。
@@ -229,6 +244,11 @@ def format_alert_text(kind: str, amount: float, balance: float) -> str:
         return f"DeepSeek 账户充值额度增加 ¥{amount:.2f}，当前余额 ¥{balance:.2f}。"
     if kind == KIND_GRANT:
         return f"DeepSeek 账户收到赠送额度 ¥{amount:.2f}，当前余额 ¥{balance:.2f}。"
+    if kind == KIND_CRITICAL:
+        return (
+            f"DeepSeek 账户余额不足 ¥{config.balance_critical_threshold:.2f}，"
+            f"当前仅剩 ¥{balance:.2f}，请立即充值。"
+        )
     if kind == KIND_LOW:
         return (
             f"DeepSeek 账户余额不足 ¥{config.balance_low_threshold:.2f}，"
@@ -243,8 +263,10 @@ def format_alert_text(kind: str, amount: float, balance: float) -> str:
 # 重启后可由 DB 里的最近一条快照重建，所以不需要持久化。
 
 _state_loaded = False    # 是否已经根据 DB 快照初始化过
-_low_armed = True        # 这一波下探还能不能报 LOW（报过就解除，回到阈值上重新武装）
+_low_armed = True        # ¥10 这档还能不能报（报过就解除，回到阈值上重新武装）
 _low_alerted = False     # 当前这波低余额是否已经播报过
+_critical_armed = True   # ¥5 这档还能不能报（独立武装，与上面互不影响）
+_critical_alerted = False
 _last_total: Optional[float] = None  # 最近一次成功取到的余额
 
 
@@ -277,40 +299,55 @@ def _db_prev_snapshot(currency: str = "CNY") -> Optional[BalanceSnapshot]:
 
 
 def _init_state_from_db(prev: BalanceSnapshot | None = None) -> None:
-    """按上次快照推导 low_armed 初值（只在第一次调用时生效）
+    """按上次快照推导两档的武装初值（只在第一次调用时生效）
 
-    上次余额就已经低于阈值 ⇒ 说明这波低余额在重启前已经提醒过，
-    视为「已提醒 + 已解除武装」，避免每次重启都重复播报一遍。
+    上次余额就已经低于某一档 ⇒ 说明这波下探在重启前已经提醒过，
+    那一档视为「已提醒 + 已解除武装」，避免每次重启都重复播报一遍。
+    两档分别推导：重启时余额 7 块，¥10 那档算已提醒，¥5 那档仍然是武装的。
     """
     global _state_loaded, _low_armed, _low_alerted, _last_total
+    global _critical_armed, _critical_alerted
 
     if _state_loaded:
         return
     _state_loaded = True
 
     if prev is None:
-        # 库里没有历史快照 → 首次运行，正常武装
+        # 库里没有历史快照 → 首次运行，两档都正常武装
         _low_armed = True
         _low_alerted = False
+        _critical_armed = True
+        _critical_alerted = False
         return
 
     _last_total = prev.total
+
     is_low = prev.total < config.balance_low_threshold
     _low_armed = not is_low
     _low_alerted = is_low
+
+    is_critical = prev.total < config.balance_critical_threshold
+    _critical_armed = not is_critical
+    _critical_alerted = is_critical
 
 
 def _apply_snapshot_to_state(snapshot: BalanceSnapshot) -> None:
     """把本轮快照写进内存状态
 
-    回到阈值以上就重新武装 —— 下一次再跌破还要能提醒一次。
+    回到某一档以上就重新武装那一档 —— 下一次再跌破还要能提醒一次。
+    余额从 3 块充到 6 块：¥5 档重新武装，¥10 档仍然算「已提醒」，
+    因为 6 块依旧处在低余额状态里，没必要再喊一次「不足 ¥10」。
     """
     global _last_total, _low_armed, _low_alerted
+    global _critical_armed, _critical_alerted
 
     _last_total = snapshot.total
     if snapshot.total >= config.balance_low_threshold:
         _low_armed = True
         _low_alerted = False
+    if snapshot.total >= config.balance_critical_threshold:
+        _critical_armed = True
+        _critical_alerted = False
 
 
 def needs_fast_poll() -> bool:
@@ -333,10 +370,13 @@ def needs_fast_poll() -> bool:
 def reset_state_for_tests() -> None:
     """清空模块级状态（供测试使用，运行时不要调用）"""
     global _state_loaded, _low_armed, _low_alerted, _last_total
+    global _critical_armed, _critical_alerted
 
     _state_loaded = False
     _low_armed = True
     _low_alerted = False
+    _critical_armed = True
+    _critical_alerted = False
     _last_total = None
 
 
@@ -456,7 +496,7 @@ async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
     整个函数体包在 try/except 里 —— 定时任务里抛异常会被 APScheduler
     记为失败，且可能影响后续轮次，所以异常只记日志、绝不外抛。
     """
-    global _low_armed, _low_alerted
+    global _low_armed, _low_alerted, _critical_armed, _critical_alerted
 
     try:
         if not config.balance_alert_enabled:
@@ -471,7 +511,8 @@ async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
         _init_state_from_db(prev)
 
         events = detect_events(
-            prev, curr, config.balance_low_threshold, _low_armed
+            prev, curr, config.balance_low_threshold, _low_armed,
+            config.balance_critical_threshold, _critical_armed,
         )
 
         for index, (kind, amount) in enumerate(events):
@@ -480,6 +521,13 @@ async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
             if kind == KIND_LOW:
                 # 这一波低余额已提醒过 → 解除武装，等回到阈值以上再重新武装
                 # （多个群共用同一个事件，只算提醒过一次，不会重复武装/解除）
+                _low_alerted = True
+                _low_armed = False
+            elif kind == KIND_CRITICAL:
+                # 跌破更严重的那档：¥10 那档一并算作已提醒，
+                # 否则下一轮还会因为「4 < 10」再补发一条
+                _critical_alerted = True
+                _critical_armed = False
                 _low_alerted = True
                 _low_armed = False
 
