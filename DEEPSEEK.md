@@ -1176,7 +1176,7 @@ max_tokens=8,   effort=max  → 思考 33 字符,  content=""           ❌ 触�
 2. **低余额必须迟滞** —— `_low_armed` 跌破只报一次，回到阈值以上再重新武装。
    否则每轮轮询都重复播报，变成刷屏。
 3. **心跳固定 60 秒 + 门控间隔** —— 真正打接口的频率由 `needs_fast_poll()` 决定
-   （正常 1800s、等充值 60s）。好处是状态切换不用重新注册 APScheduler 任务。
+   （正常 1800s；**跌破第二档 ¥5** 才压到 60s）。好处是状态切换不用重新注册 APScheduler 任务。
 
 #### 旁白的写法（可复用经验）
 
@@ -1886,3 +1886,40 @@ TOPUP → GRANT → 不可用=LOW → CRITICAL → LOW
 
 - `.env` 新增 `BALANCE_CRITICAL_THRESHOLD=5`；不写就用默认 5.0。
 - 重启首轮只建基线；若重启时余额已低于 5，按 DB 快照推导为「已提醒」，不会补播。
+
+## 30. 快速轮询只对第二档生效（v2.7.9）
+
+### 30.1 改了什么
+
+`needs_fast_poll()` 原来判 `_low_alerted and _last_total < BALANCE_LOW_THRESHOLD` ——
+**跌破 ¥10 就压到 60 秒**。现在只判 `_last_total < BALANCE_CRITICAL_THRESHOLD`：
+
+| 余额 | 轮询间隔 |
+|---|---|
+| ≥ ¥10 | 1800s |
+| ¥5 ~ ¥10 | **1800s**（原来这里是 60s） |
+| < ¥5 | 60s |
+
+### 30.2 为什么
+
+- 第一档只是「余额不多了」的提醒，离见底还有几块钱，一分钟内充不光 ——
+  每分钟打一次接口纯属白花请求（99 个监控目标已经在轮询，能省则省）。
+- 第二档才是真盯着到账：这时用户大概率正在充值，60 秒才能尽早播报「充值额度增加」。
+- 顺带的好处：判定不再依赖 `_low_alerted`，只看余额本身；
+  重启后由 DB 快照还原的 `_last_total` 直接生效，不需要「提醒过」这个前提。
+
+### 30.3 副作用
+
+- ¥10 档播报后下一次检查要等 30 分钟；如果这半小时内直接掉破 ¥5，
+  CRITICAL 最多会晚 30 分钟才发。用户明确接受这个折中。
+- 跌破 ¥5 后若充值回到 ¥5 以上（比如 6 块），`needs_fast_poll()` 立刻回到 False，
+  间隔恢复 30 分钟 —— 不会因为「刚充完还有 6 块」继续每分钟打接口。
+
+### 30.4 测试
+
+- `TestNeedsFastPoll`：8 块 → False、3 块 → True、100 块 → False、清库 → False；
+  `test_reset_clears_memory_state` 改用 3 块。
+- `test_two_tiers_alert_in_sequence` 在 8.32 / 3.20 / 6.0 / 4.0 四个点各断言一次间隔状态。
+- `test_low_alerted_once_and_fast_poll` 改名 `test_low_alerted_once_and_still_slow_poll`，
+  断言 8.32 报 LOW 之后 `needs_fast_poll()` 是 **False**。
+- 全量：**355 passed, 2 skipped**。

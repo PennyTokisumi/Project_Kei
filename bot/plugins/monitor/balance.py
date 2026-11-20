@@ -351,11 +351,13 @@ def _apply_snapshot_to_state(snapshot: BalanceSnapshot) -> None:
 
 
 def needs_fast_poll() -> bool:
-    """是否处于「等待充值」状态：最近一次快照已低于阈值，且低余额提醒已经发过
+    """是否处于「快要见底」状态：最近一次快照已跌破第二档（``balance_critical_threshold``）
 
-    上层据此把轮询间隔从 ``balance_poll_interval`` 压到
-    ``balance_wait_poll_interval``（默认 1800s → 60s），
-    这样充值到账后一分钟内就能播报。
+    只有跌破第二档才把轮询间隔从 ``balance_poll_interval`` 压到
+    ``balance_wait_poll_interval``（默认 1800s → 60s）。
+
+    ¥10 ~ ¥5 之间仍然按 30 分钟轮询：那时离见底还有几块钱，一分钟内充不光，
+    每分钟打一次接口只是徒增请求；跌破 ¥5 才是真的要盯着到账。
     """
     if not _state_loaded:
         # 上层可能在第一次 poll 之前就问间隔；此时先按 DB 里的上次快照初始化，
@@ -364,7 +366,7 @@ def needs_fast_poll() -> bool:
 
     if _last_total is None:
         return False
-    return bool(_low_alerted and _last_total < config.balance_low_threshold)
+    return _last_total < config.balance_critical_threshold
 
 
 def reset_state_for_tests() -> None:

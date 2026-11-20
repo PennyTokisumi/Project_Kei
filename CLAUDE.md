@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（354 个用例）
+├── tests/                 # pytest（355 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -446,8 +446,13 @@ v2.7.0 就踩了这个坑：`KEI ON` 的连通性检查只给 `max_tokens=8`，�
 | 状态 | 间隔 |
 |---|---|
 | 正常 | `BALANCE_POLL_INTERVAL`（1800s） |
-| 余额 < 阈值（等充值） | `BALANCE_WAIT_POLL_INTERVAL`（60s） |
+| 余额仍在 ¥10~¥5 之间 | 仍是 `BALANCE_POLL_INTERVAL`（1800s） |
+| 余额跌破 ¥5（第二档） | `BALANCE_WAIT_POLL_INTERVAL`（60s） |
 | 接口连续失败 | 不做特殊退避，只记 warning，下轮再试 |
+
+**只有跌破第二档才加速**（`needs_fast_poll()` 判的是 `_last_total < BALANCE_CRITICAL_THRESHOLD`）。
+¥10 那档只是提醒你余额不多了，离见底还有几块钱，一分钟内充不光；
+跌破 ¥5 才是真盯着到账 —— 这时才值得每分钟打一次接口。
 
 心跳固定、间隔靠门控，好处是**状态切换不用重新注册任务**。
 官方该接口没有「每日次数」限制（只有并发限制），60 秒完全安全。
@@ -664,8 +669,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.8
-- **测试**：354 passed
+- **版本**：v2.7.9
+- **测试**：355 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

@@ -292,7 +292,7 @@ async def _backfill_names():
 # 所以「充值」「赠送额度」只能靠轮询。消耗不用轮询（每次调用的 usage 就有）。
 #
 # 心跳固定 60 秒，真正决定「这轮要不要打接口」的是 _balance_tick 里的间隔判断 ——
-# 这样「正常 30 分钟 / 等待充值 60 秒」的切换不需要重新注册任务。
+# 这样「正常 30 分钟 / 跌破 ¥5 后 60 秒」的切换不需要重新注册任务。
 
 BALANCE_TICK_SECONDS = 60
 
@@ -367,7 +367,7 @@ def _register_balance_job():
     nb_logger.info(
         f"注册余额轮询：心跳 {BALANCE_TICK_SECONDS}s，"
         f"正常间隔 {config.balance_poll_interval}s，"
-        f"等待充值 {config.balance_wait_poll_interval}s，"
+        f"跌破 ¥{config.balance_critical_threshold:.2f} 后 {config.balance_wait_poll_interval}s，"
         f"播报群 {', '.join(str(g) for g in config.balance_alert_groups) or '未配置'}"
     )
 

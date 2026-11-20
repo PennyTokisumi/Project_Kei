@@ -458,12 +458,18 @@ class TestFetchBalance:
 
 class TestNeedsFastPoll:
     def test_no_history_is_false(self):
-        """库里没有历史快照 → 不进入等待充值状态"""
+        """库里没有历史快照 → 不进入快速轮询"""
         assert needs_fast_poll() is False
 
-    def test_low_history_is_true(self):
-        """上次快照就已低于阈值 ⇒ 视为已提醒过 → 进入等待充值状态"""
-        save_balance_snapshot("CNY", 5.0, 0.0, 5.0, True)
+    def test_between_tiers_is_false(self):
+        """¥10~¥5 之间（8 块）仍按 30 分钟轮询"""
+        save_balance_snapshot("CNY", 8.0, 0.0, 8.0, True)
+        reset_state_for_tests()
+        assert needs_fast_poll() is False
+
+    def test_critical_history_is_true(self):
+        """上次快照已跌破 ¥5 ⇒ 进入 60 秒快速轮询"""
+        save_balance_snapshot("CNY", 3.0, 0.0, 3.0, True)
         reset_state_for_tests()
         assert needs_fast_poll() is True
 
@@ -474,7 +480,7 @@ class TestNeedsFastPoll:
 
     def test_reset_clears_memory_state(self):
         """reset 后状态重新按 DB 判定；库清空则回到初始值"""
-        save_balance_snapshot("CNY", 5.0, 0.0, 5.0, True)
+        save_balance_snapshot("CNY", 3.0, 0.0, 3.0, True)
         reset_state_for_tests()
         assert needs_fast_poll() is True
 
@@ -552,8 +558,8 @@ class TestPollBalance:
         assert needs_fast_poll() is False
 
     @pytest.mark.asyncio
-    async def test_low_alerted_once_and_fast_poll(self, monkeypatch, fake_messaging):
-        """跌破阈值只报一次；之后 needs_fast_poll 为真"""
+    async def test_low_alerted_once_and_still_slow_poll(self, monkeypatch, fake_messaging):
+        """跌破第一档只报一次；8 块仍在 ¥10~¥5 之间 → 保持 30 分钟轮询"""
         monkeypatch.setattr(config, "balance_alert_enabled", True)
         monkeypatch.setattr(config, "balance_kei_comment", False)
         monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
@@ -572,7 +578,7 @@ class TestPollBalance:
         await poll_balance(bot)
         assert len(bot.sent) == 1
         assert "余额不足 ¥10.00" in bot.sent[0][1].plain_text
-        assert needs_fast_poll() is True
+        assert needs_fast_poll() is False
 
         # 余额没变 → 不重复提醒
         await poll_balance(bot)
@@ -602,6 +608,7 @@ class TestPollBalance:
         await poll_balance(bot)                       # 8.32 → 第一档
         assert len(bot.sent) == 1
         assert "余额不足 ¥10.00" in bot.sent[0][1].plain_text
+        assert needs_fast_poll() is False             # 8 块仍在 ¥10~¥5 之间
 
         await poll_balance(bot)                       # 没变化
         assert len(bot.sent) == 1
@@ -611,6 +618,7 @@ class TestPollBalance:
         assert len(bot.sent) == 2
         assert "余额不足 ¥5.00" in bot.sent[1][1].plain_text
         assert "请立即充值" in bot.sent[1][1].plain_text
+        assert needs_fast_poll() is True              # 跌破 ¥5 → 60 秒
 
         await poll_balance(bot)                       # 没变化
         assert len(bot.sent) == 2
@@ -620,11 +628,13 @@ class TestPollBalance:
         await poll_balance(bot)
         assert len(bot.sent) == 3
         assert "充值额度增加" in bot.sent[2][1].plain_text
+        assert needs_fast_poll() is False             # 回到 ¥5 以上 → 恢复 30 分钟
 
         state["total"] = 4.0
         await poll_balance(bot)                       # 再次跌破第二档 → 再报一次
         assert len(bot.sent) == 4
         assert "余额不足 ¥5.00" in bot.sent[3][1].plain_text
+        assert needs_fast_poll() is True
 
     @pytest.mark.asyncio
     async def test_restart_between_tiers_only_critical_fires(
