@@ -74,7 +74,7 @@ Project_Kei/
 │       ├── bilibili.py    # 共享 headers（注入 Cookie）
 │       ├── db.py          # 全项目唯一 SQLite 连接入口
 │       └── wbi.py         # B站 WBI 签名
-├── tests/                 # pytest（338 个用例）
+├── tests/                 # pytest（343 个用例）
 │   ├── conftest.py        # mock nonebot + 每例独立临时库
 │   ├── test_bilibili_dynamic.py
 │   ├── test_dedup.py
@@ -444,6 +444,32 @@ v2.7.0 就踩了这个坑：`KEI ON` 的连通性检查只给 `max_tokens=8`，�
 心跳固定、间隔靠门控，好处是**状态切换不用重新注册任务**。
 官方该接口没有「每日次数」限制（只有并发限制），60 秒完全安全。
 
+#### 播报到哪些群（可以配多个）
+
+`BALANCE_ALERT_GROUP_IDS` 用**英文逗号**分隔，顺序就是发送顺序，重复项自动去掉：
+
+| 配置 | 实际播报群 |
+|---|---|
+| `795185048,1031343674` | 两个群，先 795185048 再 1031343674 |
+| `795185048，1031343674` | 同上（中文逗号也认） |
+| `795185048,,abc,795185048` | 只有 795185048（空项 / 非数字 / 重复全部跳过） |
+
+- 固定播报**每群各发一份**（`_send_alert_to_groups`）。某个群发不出去（被禁言 / 掉线）
+  只记日志，**不影响其它群** —— 一个群收不到不该拖累另一个群。
+- Kei 的旁白**按群独立判断**：`comment_fn(kind, amount, balance, group_id)` 带群号，
+  因为 `KEI ON` 是按群开关的 —— A 群要跟话、B 群可能一声不吭。
+  未开 LLM 的群在 `kei_balance_comment()` 里直接返回 `[]`，不会白打一次模型接口。
+- 低余额的「武装 / 解除」是**全局状态**：同一次跌破只算提醒过一次，
+  不会因为配了两个群就变成两轮提醒、也不会重复武装。
+
+⚠️ 字段名是 `BALANCE_ALERT_GROUP_IDS`（**复数**）。旧的单数 `BALANCE_ALERT_GROUP_ID`
+不再被读取（`extra="ignore"` 会静默忽略它），升级后不改就退回默认测试群。
+
+⚠️ 这个字段在 `config.py` 里是**字符串**不是 `list[int]`：
+pydantic-settings 对 list 字段会先按 JSON 解析，`795185048,1031343674` 这种写法
+会直接抛 `SettingsError` 让整个进程起不来（实测）。所以存字符串、由
+`config.balance_alert_groups` 属性解析 —— 写错一项也只会跳过那一项。
+
 #### 播报 = 固定文本 + 可选旁白
 
 ```
@@ -623,8 +649,8 @@ cd bot
 
 ## 当前状态
 
-- **版本**：v2.7.6
-- **测试**：338 passed
+- **版本**：v2.7.7
+- **测试**：343 passed
 - **SnowLuma**：2.0.3（`2.0.3-node` / protocol v11），Node v24.17.0
 - **长期记忆**：27 条（锁定 9 / 可整理 18）
 - **运行中群**：2 个（`Schale Secret Cafe`、`【FGO】Changing Seasons`）

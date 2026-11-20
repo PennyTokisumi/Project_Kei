@@ -1217,7 +1217,7 @@ low   → （叹气）余额只剩 8 块多了……老师，你是不是又忘�
 
 ```bash
 BALANCE_ALERT_ENABLED=true
-BALANCE_ALERT_GROUP_ID=1031343674   # 测试群，测完改这里
+BALANCE_ALERT_GROUP_IDS=1031343674   # 多个群用英文逗号分隔，如 795185048,1031343674
 BALANCE_POLL_INTERVAL=1800
 BALANCE_WAIT_POLL_INTERVAL=60
 BALANCE_LOW_THRESHOLD=10
@@ -1769,3 +1769,54 @@ py-spy 是排查这次问题时装的，**用完已卸载**（它只是开发期
 
 **注意**：抓栈前先看 `data/logs/bot.log` 里的 `[watchdog]` 行，确认卡顿时间点和持续时长，
 再去对照 `dump`/`record`，比盲抓高效得多。
+
+## 28. 余额播报同时发到多个群（v2.7.7）
+
+用户要求：`795185048` 之外，`1031343674` 也要收余额播报。
+
+### 28.1 配置从「一个群」改成「一串群」
+
+`BALANCE_ALERT_GROUP_ID`（int）→ `BALANCE_ALERT_GROUP_IDS`（英文逗号分隔的**字符串**）。
+
+**为什么不是 `list[int]`**：pydantic-settings 对复杂类型会先按 JSON 解析，
+`.env` 里写 `795185048,1031343674` 会直接抛
+`SettingsError: error parsing value for field "..."`，**整个进程起不来**。
+实测加 `@field_validator(mode="before")` 也没用 —— 异常发生在校验之前。
+所以字段存 `str`，由 `config.balance_alert_groups` 属性解析：
+
+- 中文逗号、多余空格、混写都认
+- 空项 / 非数字 / 非正数跳过
+- 重复项去重，**顺序保持配置里的顺序**（也就是发送顺序）
+
+写错一项只会少发一个群，不会让播报整体失效。
+
+### 28.2 编排层改动
+
+- `_send_alert_to_groups()`：固定文本每群各发一份；单群发送异常只记 error 日志，
+  **继续发下一个群** —— 一个群被禁言不该让另一个群也收不到。
+- `_send_comments_to_groups()`：逐群调 `_maybe_send_comment(..., group_id)`。
+- `CommentFn` 签名从 `(kind, amount, balance)` 扩成
+  `(kind, amount, balance, group_id)` —— **不得不改**：KEI ON 是
+  `llm_enabled_{group_id}` 按群存的，不带群号就没法判断「这个群要不要跟话」。
+  `kei_balance_comment()` 本来就有 `group_id` 参数，直接兼容。
+- 低余额的 `_low_armed` / `_low_alerted` 保持**全局**：多群只是投递面更广，
+  事件还是同一个，不会重复武装，也不会每个群各报一轮。
+- `@Kei balance` 与启动日志里的「播报群」现在显示逗号分隔的列表。
+
+### 28.3 测试
+
+- 新增 `TestMultipleGroups`（3 例）：每群各发一份 / 一群失败不拖累另一群 /
+  旁白按群独立判断（A 群说话、B 群沉默）
+- 新增 `TestAlertGroupsConfig`（2 例）：解析容错、空配置
+- 新增 **autouse fixture `_pin_alert_groups`**，把播报群钉成 `1000000001`。
+  这一步是被真实失败逼出来的：本机 `.env` 改成两个群后，那些断言
+  `len(bot.sent) == 1` 的老用例全红了 —— 因为配置来自环境，而不是测试自己。
+
+  **教训**：只要断言涉及「发了几条消息」，就不能让测试读本机 `.env`，
+  必须在 fixture 里钉死相关配置。
+
+### 28.4 升级注意
+
+旧键 `BALANCE_ALERT_GROUP_ID` 不再被读取，`extra="ignore"` 会**静默**忽略它 ——
+升级后不改 `.env` 的话播报会掉到默认值 `1031343674`（只发那一个群）。
+本机 `.env` 已改成 `BALANCE_ALERT_GROUP_IDS=795185048,1031343674`。

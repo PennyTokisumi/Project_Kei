@@ -101,9 +101,12 @@ class Config(BaseSettings):
     # 可以把间隔压到 60 秒，几乎无额外代价。
     balance_alert_enabled: bool = Field(
         default=True, description="是否启用 DeepSeek 余额播报")
-    balance_alert_group_id: int = Field(
-        default=1031343674,
-        description="播报发到哪个群（当前是测试群，测完改成正式群即可）")
+    # 用字符串而不是 list[int]：pydantic-settings 对 list 字段会先按 JSON
+    # 解析，环境变量写成 `795185048,1031343674` 会直接抛 SettingsError 让启动失败。
+    # 存成字符串、用下面的 balance_alert_groups 属性解析，写错也只会被跳过。
+    balance_alert_group_ids: str = Field(
+        default="1031343674",
+        description="播报发到哪些群，多个用英文逗号分隔")
     balance_poll_interval: int = Field(
         default=1800, description="正常轮询间隔（秒），默认 30 分钟")
     balance_wait_poll_interval: int = Field(
@@ -138,6 +141,26 @@ class Config(BaseSettings):
     @property
     def is_gemini(self) -> bool:
         return self.llm_provider == "gemini"
+
+    @property
+    def balance_alert_groups(self) -> list[int]:
+        """解析 ``balance_alert_group_ids`` 得到播报群列表
+
+        容错：中文逗号、多余空格、空项、非数字项一律跳过，重复的去掉。
+        写错其中一个群号只影响那一个，不会让整个播报挂掉。
+        """
+        groups: list[int] = []
+        for raw in str(self.balance_alert_group_ids).replace("，", ",").split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                group_id = int(raw)
+            except ValueError:
+                continue
+            if group_id > 0 and group_id not in groups:
+                groups.append(group_id)
+        return groups
 
     model_config = {
         "env_file": str(Path(__file__).resolve().parent / ".env"),

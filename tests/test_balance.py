@@ -123,6 +123,16 @@ def fake_messaging(monkeypatch):
     monkeypatch.setattr(balance_mod, "MessageSegment", _FakeMessageSegment)
 
 
+@pytest.fixture(autouse=True)
+def _pin_alert_groups(monkeypatch):
+    """默认把一个测试群钉死，别让本机 .env 的播报群影响「发了几条」的断言
+
+    本机 .env 里可能配了两个群（开发环境就是这样），不钉死的话
+    同一份测试在别人机器上会数出不同的条数。要测多群的用例自己覆盖这个值。
+    """
+    monkeypatch.setattr(config, "balance_alert_group_ids", "1000000001")
+
+
 # ─── 1. 解析 ────────────────────────────────────────────
 
 
@@ -477,7 +487,7 @@ class TestPollBalance:
         """充值事件：@Sensei + 固定文本，然后落库"""
         monkeypatch.setattr(config, "balance_alert_enabled", True)
         monkeypatch.setattr(config, "balance_kei_comment", False)
-        monkeypatch.setattr(config, "balance_alert_group_id", 123456)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
         monkeypatch.setattr(config, "balance_low_threshold", 10.0)
 
         save_balance_snapshot("CNY", 23.23, 0.0, 23.23, True)
@@ -508,7 +518,7 @@ class TestPollBalance:
         """跌破阈值只报一次；之后 needs_fast_poll 为真"""
         monkeypatch.setattr(config, "balance_alert_enabled", True)
         monkeypatch.setattr(config, "balance_kei_comment", False)
-        monkeypatch.setattr(config, "balance_alert_group_id", 123456)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
         monkeypatch.setattr(config, "balance_low_threshold", 10.0)
         monkeypatch.setattr(balance_mod, "ALERT_GAP_SECONDS", 0)
 
@@ -558,6 +568,7 @@ class TestPollBalance:
         monkeypatch.setattr(config, "balance_alert_enabled", True)
         monkeypatch.setattr(config, "balance_kei_comment", True)
         monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "123456")
 
         save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
         reset_state_for_tests()
@@ -569,14 +580,14 @@ class TestPollBalance:
 
         calls = []
 
-        async def comment_fn(kind, amount, balance):
-            calls.append((kind, amount, balance))
+        async def comment_fn(kind, amount, balance, group_id):
+            calls.append((kind, amount, balance, group_id))
             return "老师，钱到账了哦。"
 
         bot = _FakeBot()
         await poll_balance(bot, comment_fn=comment_fn)
 
-        assert calls == [(KIND_TOPUP, 50.0, 150.0)]
+        assert calls == [(KIND_TOPUP, 50.0, 150.0, 123456)]
         assert len(bot.sent) == 2
         # 第一条带 @，第二条纯文本
         assert bot.sent[0][1][0].type == "at"
@@ -600,7 +611,7 @@ class TestPollBalance:
 
         monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
 
-        async def comment_fn(kind, amount, balance):
+        async def comment_fn(kind, amount, balance, group_id):
             return ["诶？多了钱……", "是老师充的吗……谢谢"]
 
         bot = _FakeBot()
@@ -630,7 +641,7 @@ class TestPollBalance:
 
         monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
 
-        async def comment_fn(kind, amount, balance):
+        async def comment_fn(kind, amount, balance, group_id):
             return []
 
         bot = _FakeBot()
@@ -655,7 +666,7 @@ class TestPollBalance:
 
         called = []
 
-        async def comment_fn(kind, amount, balance):
+        async def comment_fn(kind, amount, balance, group_id):
             called.append(1)
             return "不该被调用"
 
@@ -688,6 +699,107 @@ class TestPollBalance:
         await poll_balance(_FailingBot())
 
         assert get_last_balance_snapshot("CNY")["total_balance"] == pytest.approx(8.32)
+
+
+class TestMultipleGroups:
+    """播报群可以配多个：固定文本每群各一份，彼此互不拖累"""
+
+    @pytest.mark.asyncio
+    async def test_alert_goes_to_every_group(self, monkeypatch, fake_messaging):
+        """一次充值 → 每个配置的群都收到「@Sensei + 固定文本」"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", False)
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "795185048,1031343674")
+
+        save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
+        reset_state_for_tests()
+
+        async def fake_fetch():
+            return snap(total=150.0, granted=0.0, topped_up=150.0)
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        bot = _FakeBot()
+        await poll_balance(bot)
+
+        assert [gid for gid, _ in bot.sent] == [795185048, 1031343674]
+        for _, message in bot.sent:
+            assert message[0].type == "at"
+            assert "充值额度增加 ¥50.00" in message.plain_text
+
+    @pytest.mark.asyncio
+    async def test_one_group_failure_does_not_block_others(self, monkeypatch, fake_messaging):
+        """第一个群发不出去（被禁言/掉线）→ 第二个群照样收到"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", False)
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "795185048,1031343674")
+
+        save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
+        reset_state_for_tests()
+
+        async def fake_fetch():
+            return snap(total=150.0, granted=0.0, topped_up=150.0)
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        class _OneFailBot(_FakeBot):
+            async def send_group_msg(self, group_id, message):
+                if group_id == 795185048:
+                    raise RuntimeError("群里被禁言了")
+                await super().send_group_msg(group_id, message)
+
+        bot = _OneFailBot()
+        await poll_balance(bot)
+
+        assert [gid for gid, _ in bot.sent] == [1031343674]
+
+    @pytest.mark.asyncio
+    async def test_comment_is_per_group(self, monkeypatch, fake_messaging):
+        """点评按群分别判断：只有一个群要说话时，另一群不会多说一句"""
+        monkeypatch.setattr(config, "balance_alert_enabled", True)
+        monkeypatch.setattr(config, "balance_kei_comment", True)
+        monkeypatch.setattr(config, "balance_low_threshold", 10.0)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "795185048,1031343674")
+        monkeypatch.setattr(balance_mod, "COMMENT_GAP_SECONDS", 0)
+
+        save_balance_snapshot("CNY", 100.0, 0.0, 100.0, True)
+        reset_state_for_tests()
+
+        async def fake_fetch():
+            return snap(total=150.0, granted=0.0, topped_up=150.0)
+
+        monkeypatch.setattr(balance_mod, "fetch_balance", fake_fetch)
+
+        calls = []
+
+        async def comment_fn(kind, amount, balance, group_id):
+            calls.append(group_id)
+            return "到账了。" if group_id == 1031343674 else []
+
+        bot = _FakeBot()
+        await poll_balance(bot, comment_fn=comment_fn)
+
+        # 两个群都问过一遍（另一个群自己决定不说话）
+        assert calls == [795185048, 1031343674]
+        # 2 条固定播报 + 1 条旁白
+        assert [gid for gid, _ in bot.sent] == [795185048, 1031343674, 1031343674]
+        assert bot.sent[-1][1].plain_text == "到账了。"
+
+
+class TestAlertGroupsConfig:
+    """balance_alert_group_ids 的解析容错（写错一个群不该拖垮整个播报）"""
+
+    def test_parse(self, monkeypatch):
+        """中文逗号、空格、重复项、非数字项都能吃下去"""
+        monkeypatch.setattr(
+            config, "balance_alert_group_ids", " 795185048，1031343674 ,1031343674, abc, ")
+        assert config.balance_alert_groups == [795185048, 1031343674]
+
+    def test_empty(self, monkeypatch):
+        monkeypatch.setattr(config, "balance_alert_group_ids", "")
+        assert config.balance_alert_groups == []
 
 
 class TestAlertMessageShape:

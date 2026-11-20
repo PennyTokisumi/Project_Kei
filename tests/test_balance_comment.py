@@ -187,16 +187,16 @@ class TestKeiBalanceComment:
         assert calls == []
 
     def test_group_id_defaults_to_alert_group(self, monkeypatch, llm_on):
-        """播报器只传 (kind, amount, balance) 三个参数 → 按播报群判断 KEI ON"""
-        monkeypatch.setattr(config, "balance_alert_group_id", GROUP_ID)
+        """播报器没传群号时 → 用第一个播报群判断 KEI ON"""
+        monkeypatch.setattr(config, "balance_alert_group_ids", str(GROUP_ID))
         _install_chat(monkeypatch, result={"content": "原来到账了。"})
 
         assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == ["原来到账了。"]
 
     def test_default_group_without_llm(self, monkeypatch, llm_on):
-        """缺省群就是播报群；它没 KEI ON 时同样不说话"""
+        """缺省群就是第一个播报群；它没 KEI ON 时同样不说话"""
         calls = []
-        monkeypatch.setattr(config, "balance_alert_group_id", 999999)
+        monkeypatch.setattr(config, "balance_alert_group_ids", "999999")
         _install_chat(monkeypatch, result={"content": "不该出现"}, calls=calls)
 
         assert _run(bc.kei_balance_comment("topup", 10.0, 15.0)) == []

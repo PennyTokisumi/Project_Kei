@@ -49,9 +49,11 @@ COMMENT_GAP_SECONDS = 1.5
 # 历史快照保留天数（只为「跨重启对比增量」和排查问题，不需要永久保留）
 KEEP_DAYS = 90
 
-# comment_fn(kind, amount, balance) -> 非空文本时单独发一条
+# comment_fn(kind, amount, balance, group_id) -> 非空文本时单独发一条
 # 返回单条字符串或多条列表都行；列表用于「她自己也分成两三句说」的场合
-CommentFn = Callable[[str, float, float], Awaitable[Optional[Union[str, list[str]]]]]
+# 带上 group_id 是因为 KEI ON 是按群开的：同一个事件在 A 群要说话、
+# 在 B 群可能根本不说话。
+CommentFn = Callable[[str, float, float, int], Awaitable[Optional[Union[str, list[str]]]]]
 
 
 @dataclass(frozen=True)
@@ -341,6 +343,14 @@ def reset_state_for_tests() -> None:
 # ─── 播报编排 ──────────────────────────────────────────────────
 
 
+def _alert_groups() -> list[int]:
+    """要播报的群列表（配置解析出来的顺序，去重）
+
+    空列表意味着一个群都不发 —— 调用方只落库快照，不播报。
+    """
+    return config.balance_alert_groups
+
+
 def _build_alert_message(text: str) -> Message:
     """@Sensei + 固定播报文本（@ 只在这里加，format_alert_text 不含）
 
@@ -354,12 +364,15 @@ def _build_alert_message(text: str) -> Message:
 
 
 async def _maybe_send_comment(bot, comment_fn: Optional[CommentFn], kind: str,
-                              amount: float, balance: float) -> None:
-    """让 Kei 跟一句点评（单独一条、不带 @）
+                              amount: float, balance: float, group_id: int) -> None:
+    """让 Kei 在**一个群**里跟一句点评（单独一条、不带 @）
 
     ``comment_fn`` 可以返回**字符串或字符串列表** —— 她可以像正常聊天那样
     把话分成两三条发出去（「诶？多了钱……」「是老师充的吗……」），
     这里逐条发送并留间隔，看起来像真的在打字。
+
+    必须传 ``group_id``：KEI ON 是按群开关的，同一个事件在一个群要跟话、
+    在另一个群可能完全不该出声。
 
     失败只记日志：点评是锦上添花，不能影响固定播报。
     """
@@ -367,9 +380,10 @@ async def _maybe_send_comment(bot, comment_fn: Optional[CommentFn], kind: str,
         return
 
     try:
-        comment = await comment_fn(kind, amount, balance)
+        comment = await comment_fn(kind, amount, balance, group_id)
     except Exception as e:
-        nb_logger.warning(f"余额点评生成失败 [{kind}]: {type(e).__name__}: {e}")
+        nb_logger.warning(
+            f"余额点评生成失败 [{kind}][群 {group_id}]: {type(e).__name__}: {e}")
         return
 
     # 兼容两种返回：单条字符串 / 多条列表
@@ -385,15 +399,46 @@ async def _maybe_send_comment(bot, comment_fn: Optional[CommentFn], kind: str,
     for index, segment in enumerate(segments):
         try:
             await bot.send_group_msg(
-                group_id=config.balance_alert_group_id,
+                group_id=group_id,
                 message=Message([MessageSegment.text(segment)]),
             )
         except Exception as e:
-            nb_logger.error(f"余额点评发送失败 [{kind}]: {e}")
+            nb_logger.error(f"余额点评发送失败 [{kind}][群 {group_id}]: {e}")
             return
         # 多条之间留一点间隔，模拟打字节奏
         if index < len(segments) - 1:
             await asyncio.sleep(COMMENT_GAP_SECONDS)
+
+
+async def _send_alert_to_groups(bot, kind: str, amount: float, total: float) -> None:
+    """把固定播报文本发到**所有**配置的群
+
+    单个群发送失败只记日志，不影响其它群 —— 一个群的机器人被禁言
+    不该让另一个群也收不到余额变化。
+    """
+    groups = _alert_groups()
+    if not groups:
+        nb_logger.warning("未配置播报群（BALANCE_ALERT_GROUP_IDS 为空），本轮只落库不播报")
+        return
+
+    text = format_alert_text(kind, amount, total)
+    for group_id in groups:
+        try:
+            await bot.send_group_msg(
+                group_id=group_id,
+                message=_build_alert_message(text),
+            )
+            nb_logger.info(
+                f"余额播报 [{kind}] 群 {group_id} 金额 {amount:.2f} 余额 {total:.2f}")
+        except Exception as e:
+            nb_logger.error(f"余额播报发送失败 [{kind}][群 {group_id}]: {e}")
+
+
+async def _send_comments_to_groups(bot, comment_fn: Optional[CommentFn],
+                                   kind: str, amount: float, balance: float) -> None:
+    """逐群问 Kei 要不要跟话（每个群各自判断 KEI ON，互不影响）"""
+    for group_id in _alert_groups():
+        await _maybe_send_comment(bot, comment_fn, kind, amount, balance, group_id)
 
 
 async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
@@ -404,7 +449,8 @@ async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
     2. 拉取余额，失败只记 warning（**绝不播报**，宁可没消息也不能报假消息）
     3. 取 DB 里的上次快照，推导 low_armed
     4. 检测事件
-    5. 逐条播报（@Sensei + 固定文本；可选 Kei 点评单独一条）
+    5. 逐条播报（@Sensei + 固定文本，**每个配置的群各发一份**；
+       可选 Kei 点评按群单独判断 KEI ON，各自另发一条）
     6. 落库本轮快照 + 清理 90 天前的历史
 
     整个函数体包在 try/except 里 —— 定时任务里抛异常会被 APScheduler
@@ -429,22 +475,15 @@ async def poll_balance(bot, *, comment_fn: Optional[CommentFn] = None) -> None:
         )
 
         for index, (kind, amount) in enumerate(events):
-            text = format_alert_text(kind, amount, curr.total)
-            try:
-                await bot.send_group_msg(
-                    group_id=config.balance_alert_group_id,
-                    message=_build_alert_message(text),
-                )
-                nb_logger.info(f"余额播报 [{kind}] 金额 {amount:.2f} 余额 {curr.total:.2f}")
-            except Exception as e:
-                nb_logger.error(f"余额播报发送失败 [{kind}]: {e}")
+            await _send_alert_to_groups(bot, kind, amount, curr.total)
 
             if kind == KIND_LOW:
                 # 这一波低余额已提醒过 → 解除武装，等回到阈值以上再重新武装
+                # （多个群共用同一个事件，只算提醒过一次，不会重复武装/解除）
                 _low_alerted = True
                 _low_armed = False
 
-            await _maybe_send_comment(bot, comment_fn, kind, amount, curr.total)
+            await _send_comments_to_groups(bot, comment_fn, kind, amount, curr.total)
 
             # 多条事件之间留 1 秒间隔，避免 QQ 端像刷屏
             if index < len(events) - 1:

@@ -248,9 +248,9 @@ async def kei_balance_comment(kind: str, amount: float, balance: float,
     之所以返回列表而不是单个字符串：她可以像正常聊天那样把话分成两三条发出去
     （「诶？多了钱……[SEP]是老师充的吗……谢谢」），播报器会逐条发送、中间留间隔。
 
-    ``group_id`` 缺省时取 ``config.balance_alert_group_id`` —— 播报器
-    （``monitor/balance.py`` 的 ``comment_fn``）只按 ``(kind, amount, balance)``
-    三个参数调用，而播报本来就固定发到那一个群，用同一个群判断 KEI ON 才对。
+    ``group_id`` 缺省时取配置里的第一个播报群 —— 正常调用路径
+    （``monitor/balance.py`` 的 ``comment_fn``）会显式传群号，因为播报可以
+    同时发到多个群，而 KEI ON 是按群开的，必须逐群判断。
 
     返回空列表的情况：
     - ``config.balance_kei_comment`` 为假
@@ -264,7 +264,11 @@ async def kei_balance_comment(kind: str, amount: float, balance: float,
     """
     try:
         if group_id is None:
-            group_id = config.balance_alert_group_id
+            groups = config.balance_alert_groups
+            if not groups:
+                nb_logger.debug("Kei 余额评论：未配置播报群，跳过")
+                return []
+            group_id = groups[0]
 
         if not config.balance_kei_comment:
             nb_logger.debug("Kei 余额评论：配置已关闭，跳过")

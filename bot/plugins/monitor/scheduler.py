@@ -368,7 +368,7 @@ def _register_balance_job():
         f"注册余额轮询：心跳 {BALANCE_TICK_SECONDS}s，"
         f"正常间隔 {config.balance_poll_interval}s，"
         f"等待充值 {config.balance_wait_poll_interval}s，"
-        f"播报群 {config.balance_alert_group_id}"
+        f"播报群 {', '.join(str(g) for g in config.balance_alert_groups) or '未配置'}"
     )
 
 
